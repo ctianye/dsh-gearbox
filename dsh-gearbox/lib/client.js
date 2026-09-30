@@ -732,15 +732,28 @@ window.__ModuleLoader__.load({
 			return GearboxSection;
 		}
 
-		/** Resolve the active language for the nav label. */
+		/**
+		 * Resolve the active language.
+		 *
+		 * Order matters and was wrong once: the shell sets
+		 * `document.documentElement.lang = "en"` even when the app runs in Chinese, so
+		 * consulting the document first pinned the whole panel to English. The
+		 * browser/Electron locale (`navigator.language`, which follows the OS and
+		 * matched `locale: zh-CN` in the app log) is the reliable signal, so it wins;
+		 * the document and the locale service are only fallbacks.
+		 */
 		function activeLanguage(ctx) {
+			const looksChinese = (value) => typeof value === "string" && /^zh/i.test(value);
 			try {
+				if (looksChinese(navigator?.language)) return "zh";
+				if (Array.isArray(navigator?.languages) && navigator.languages.some(looksChinese)) return "zh";
+				if (looksChinese(document.documentElement?.lang)) return "zh";
 				const fromService = ctx.locale?.current?.() ?? ctx.locale?.language?.();
-				if (typeof fromService === "string" && fromService.length > 0) return fromService.startsWith("zh") ? "zh" : "en";
+				if (looksChinese(fromService)) return "zh";
 			} catch {
-				/* fall through to the document */
+				/* any of these can be unavailable; fall through to English */
 			}
-			return String(document.documentElement.lang ?? navigator.language ?? "en").startsWith("zh") ? "zh" : "en";
+			return "en";
 		}
 
 		function apply(ctx) {
