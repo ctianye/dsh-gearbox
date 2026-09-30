@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "模型变速箱",
+    "description": "第三方接入的两个堵点：思考档位的字段/取值知识（Effort Studio）与图像生成通道（Image Lane）。"
+  }
+}

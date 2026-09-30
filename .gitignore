@@ -32,3 +32,18 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Scratch space for verification runs (boot logs, entry-state snapshots)
+.workbuddy/
+
+# DSH 反编译源码，仅本地查阅契约用；体积大且不是本仓库的产物
+asar-extract/
+
+# 插件在本工作区的图片输出目录
+.dsh-gearbox/
+
+# 本机 profile 配置备份（含网关地址与凭据引用名，属机器相关信息）
+profile-backups/
+
+# 一次性排查脚本（其功能已由 wire-check / probe-* 覆盖）
+scripts/q2.js
