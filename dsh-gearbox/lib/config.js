@@ -90,6 +90,16 @@ export const Config = z.object({
   applyMode: z.union(['auto', 'manual'])
     .description('auto=保存即直写 llm-pi-ai 配置（写入前本地校验，不合法规则单独拒绝而不拖垮整次保存）；manual=仅在 /gears/api/apply 或导出 YAML 后生效'),
 
+  // -- 输入框交互 --
+  ui: z.object({
+    imageMode: z.boolean()
+      .description('输入框「图像模式」开关的默认状态。开启后，输入区出现提示词优化按钮，发送按生图处理')
+      .default(false),
+    enhanceLane: z.union(['t2i', 'edit'])
+      .description('提示词优化走的通道：t2i 用 promptEnhancer（文生图扩写），edit 用 editEnhancer（编辑指令改写）。两者在「图像通道」里各自绑定模型')
+      .default('t2i'),
+  }).description('输入框交互。提示词优化所用的**模型**在 图像通道 → promptEnhancer 里配置，此处只选走哪条通道，避免同一模型配两遍'),
+
   // -- Image Lane --
   image: z.object({
     providers: z.dict(z.object({

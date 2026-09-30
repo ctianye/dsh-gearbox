@@ -590,11 +590,14 @@ export function apply(ctx, config) {
   // re-deriving it from the raw config — and without echoing any credential.
   let laneInfo = () => ({ providers: {} });
   let laneCommands = [];
+  // 路由处理器需要调用 lane.enhance，而 lane 在下面 effect 的回调里创建，故留一个函数级引用。
+  let laneApi = null;
   const commandSurface = ctx.get('commands') === undefined ? 'absent' : 'mounted';
   ctx.effect(() => {
     const lane = registerImageLane(ctx, { image });
     laneInfo = lane.laneInfo;
     laneCommands = lane.commands;
+    laneApi = lane;
     return lane.dispose;
   }, 'dsh-gearbox: image lane');
 
@@ -757,6 +760,24 @@ export function apply(ctx, config) {
           send(200, { ok: true, changed: changed || imageWrites !== null, routes, image: imageWrites });
           return;
         }
+        /**
+         * Prompt optimisation for the composer's "optimize" button.
+         *
+         * Runs only the enhancer half of the Image Lane — no image is generated.
+         * The role it uses is the one bound in 图像通道 → 提示词优化模型, so the model
+         * is configured once and shared by both the lane and the composer.
+         */
+        if (req.method === 'POST' && url.pathname === '/gears/api/enhance') {
+          const prompt = typeof input?.prompt === 'string' ? input.prompt : '';
+          try {
+            if (laneApi === null) throw new Error('dsh-gearbox: 图像通道尚未就绪（image lane not mounted），请检查插件配置');
+            const result = await laneApi.enhance({ prompt, lane: input?.lane === 'edit' ? 'edit' : 't2i' });
+            send(200, { ok: true, ...result });
+          } catch (error) {
+            send(502, { ok: false, error: String(error?.message ?? error) });
+          }
+          return;
+        }
         send(404, { ok: false, error: `unknown gearbox route ${req.method} ${url.pathname}` });
       } catch (error) {
         send(500, { ok: false, error: String(error?.message ?? error) });
@@ -819,7 +840,7 @@ export function apply(ctx, config) {
         const current = entry.options?.config ?? {};
         // Only the sections the settings page edits; anything else passes through.
         const next = { ...current };
-        for (const section of ['rules', 'customEfforts', 'customCompat', 'image']) {
+        for (const section of ['rules', 'customEfforts', 'customCompat', 'image', 'ui']) {
           if (patch[section] !== undefined) next[section] = patch[section];
         }
         await ctx.get('configEditor').edit(entry, () => next);

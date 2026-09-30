@@ -101,6 +101,157 @@ function mimeOf(path) {
   }
 }
 
+/**
+ * The enhancer's system prompt, shared by the lane and the standalone enhance
+ * endpoint so the two cannot drift.
+ *
+ * Written as a hard constraint list on purpose: Qwen-Image-PE-T2I otherwise
+ * answers with its own reasoning ("I first separate what is fixed from what is
+ * open: …") and that narrative is useless as a prompt. The output contract has to
+ * be stated explicitly rather than implied.
+ */
+const ENHANCER_SYSTEM = {
+  t2i: 'You rewrite the user\'s description into ONE final image-generation prompt.'
+    + ' Reply with a single JSON object and nothing else: {"prompt": "<the final prompt>"}.'
+    + ' The prompt must be in English, as one paragraph or a comma-separated list of visual clauses.'
+    + ' Do not add any text outside that JSON object.',
+  edit: 'You rewrite the user\'s edit instruction into ONE final English image-editing instruction.'
+    + ' Reply with a single JSON object and nothing else: {"prompt": "<the final instruction>"}.'
+    + ' Do not add any text outside that JSON object.',
+};
+
+/**
+ * Read the enhancer's answer.
+ *
+ * Asking for prompt-only output does not work on a prompt-engineering model: the
+ * real PE-T2I replies with its reasoning ("For the subject, I choose a
+ * small-to-medium light golden puppy, because that reads clearly as youthful…")
+ * no matter how the system prompt is worded — verified against the live endpoint.
+ * So the contract is structural instead of pleading: the model is told to reply
+ * with `{"prompt": "…"}`, and the field is extracted. Whatever it narrates outside
+ * that object is ignored.
+ *
+ * Three layers, cheapest first:
+ *   1. the whole reply is the JSON object;
+ *   2. the object is embedded in surrounding prose — take the outermost braces;
+ *   3. no usable JSON — fall back to {@link cleanPrompt}.
+ *
+ * @param {string} raw
+ * @returns {string} the prompt, or `''` when nothing usable was found
+ */
+/** Yield every balanced `{…}` slice, respecting string literals and escapes. */
+function* jsonCandidates(text) {
+	for (let i = 0; i < text.length; i += 1) {
+		if (text[i] !== '{') continue;
+		let depth = 0;
+		let inString = false;
+		let escaped = false;
+		for (let j = i; j < text.length; j += 1) {
+			const ch = text[j];
+			if (inString) {
+				if (escaped) escaped = false;
+				else if (ch === '\\') escaped = true;
+				else if (ch === '"') inString = false;
+				continue;
+			}
+			if (ch === '"') inString = true;
+			else if (ch === '{') depth += 1;
+			else if (ch === '}') {
+				depth -= 1;
+				if (depth === 0) {
+					yield text.slice(i, j + 1);
+					break;
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Read the enhancer's answer.
+ *
+ * Asking for prompt-only output does not work on a prompt-engineering model: the
+ * live PE-T2I answers with its reasoning — and it does so *before* the JSON, after
+ * a `</think>` marker, with braces of its own dotted through the prose ("the
+ * request fixes {subject}…"). So the contract is structural rather than polite:
+ * the model is told to reply with `{"prompt": "…"}`, and the field is extracted.
+ * Whatever it narrates around that object is ignored.
+ *
+ * Layers, cheapest first:
+ *   1. the whole reply is the object;
+ *   2. scan every balanced `{…}` in the reply, **last first** (the answer is at the
+ *      end), and take the first one carrying a string `prompt`. Scanning from the
+ *      first `{` — the obvious implementation — is what failed first: it picked up
+ *      a brace from the narration and spanned a range that was not JSON at all;
+ *   3. no usable object — fall back to {@link cleanPrompt}.
+ *
+ * @param {string} raw
+ * @returns {string} the prompt, or `''` when the model produced none
+ */
+export function parseEnhancerOutput(raw) {
+	const text = String(raw ?? '').trim();
+	if (text === '') return '';
+	const read = (candidate) => {
+		try {
+			const parsed = JSON.parse(candidate);
+			// 只要有 prompt 字段就认账（哪怕是空串）：空串说明模型这次没给出提示词，
+			// 应当由调用方报错，而不是把整段 JSON 当提示词交出去。
+			if (parsed !== null && typeof parsed === 'object' && typeof parsed.prompt === 'string') return parsed.prompt.trim();
+		} catch {
+			/* not JSON — the caller tries the next candidate */
+		}
+		return null;
+	};
+
+	const direct = read(text);
+	if (direct !== null) return direct;
+	const candidates = [...jsonCandidates(text)];
+	for (let i = candidates.length - 1; i >= 0; i -= 1) {
+		const hit = read(candidates[i]);
+		if (hit !== null) return hit;
+	}
+	// 3) 片段不完整也能取：被截断、或 JSON 后面还跟着闲话时，括号配不上对，
+	//    但 `"prompt": "…"` 这一段本身照样抓得出来。不要求整段 JSON 合法 ——
+	//    这就是"通用性"的落点：不指望任何模型守规矩，只认结构。
+	// 结尾引号写成可选：被截断时值就取到末尾，至少能拿到内容而不是整段 JSON 外壳。
+	const field = /"prompt"\s*:\s*"((?:[^"\\]|\\.)*)"?/.exec(text);
+	if (field !== null) {
+		let value = field[1];
+		try { value = JSON.parse('"' + value + '"'); } catch { /* 转义不合法就用手里的原文 */ }
+		if (value.trim() !== '') return value.trim();
+	}
+	return cleanPrompt(text);
+}
+/** Opening words that mark a paragraph as the model narrating its own process. */
+const META_PREFIX = /^(?:i\s|i'?m\s|i'?ll\s|i will|let me|first[,:]|first of all|here'?s|here is|sure[,!]|certainly|to (?:do|answer) this|分析|首先|好的|这是|我来|我会|为了|需要先)/i;
+
+/**
+ * Strip everything that is not the prompt itself.
+ *
+ * The system prompt asks for prompt-only output, but a prompt-rewriting model is
+ * not reliably obedient, so this is the safety net: unwrap code fences, honour an
+ * explicit "Prompt:" label when one is present, and drop leading paragraphs that
+ * read as the model talking about the task rather than doing it.
+ *
+ * Deliberately conservative — it only ever removes content it can positively
+ * identify as meta, so a real prompt is never mangled.
+ *
+ * @param {string} raw
+ * @returns {string}
+ */
+export function cleanPrompt(raw) {
+  let text = String(raw ?? '').trim();
+  if (text === '') return text;
+  const fenced = /^```[a-zA-Z]*\n([\s\S]*?)\n?```$/.exec(text);
+  if (fenced !== null) text = fenced[1].trim();
+  const labelled = /(?:^|\n)\s*(?:final\s+)?(?:english\s+)?prompt\s*[:：]\s*([\s\S]+)$/i.exec(text)
+    ?? /(?:^|\n)\s*(?:最终)?提示词\s*[:：]\s*([\s\S]+)$/.exec(text);
+  if (labelled !== null) return labelled[1].trim().replace(/^["']|["']$/g, '').trim();
+  const paragraphs = text.split(/\n{2,}/).map((part) => part.trim()).filter((part) => part !== '');
+  while (paragraphs.length > 1 && META_PREFIX.test(paragraphs[0])) paragraphs.shift();
+  return paragraphs.join('\n\n').trim();
+}
+
 /** The legacy flat `style` mapped onto a protocol + body style. */
 function protocolFromStyle(style) {
   if (style === 'siliconflow') return { protocol: 'images-generations', bodyStyle: 'siliconflow' };
@@ -507,12 +658,10 @@ export function registerImageLane(ctx, { image }) {
         role: enhancerRole,
         prompt,
         references: laneKind === 'edit' ? await referenceParts(references, cwd) : undefined,
-        system: laneKind === 'edit'
-          ? 'You rewrite a short edit instruction into a precise, structured English image-editing instruction, using the reference image to name what to change. Output the instruction only.'
-          : 'You expand a short description into a structured, high-quality English image-generation prompt. Output the prompt only.',
+        system: ENHANCER_SYSTEM[laneKind === 'edit' ? 'edit' : 't2i'],
         params: gearParams(enhancerRole, undefined),
       });
-      const rewritten = extractText(body);
+      const rewritten = parseEnhancerOutput(extractText(body));
       if (rewritten.length > 0) {
         finalPrompt = rewritten;
         enhanced = true;
@@ -753,6 +902,41 @@ export function registerImageLane(ctx, { image }) {
     },
     laneInfo,
     run,
+    /**
+     * Prompt-only rewrite: run the lane's enhancer role and return the rewritten
+     * prompt, without touching an image.
+     *
+     * Split out of {@link run} because the composer's "optimize prompt" button
+     * needs exactly this half of the pipeline, and doing it through `run` would
+     * generate a picture as a side effect.
+     *
+     * @param {{ prompt: string, lane?: 't2i'|'edit', cwd?: string }} request
+     */
+    enhance: async ({ prompt, lane: laneKind = 't2i' }) => {
+      if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+        throw new Error('dsh-gearbox: a non-empty prompt is required');
+      }
+      const role = laneKind === 'edit' ? roles.editEnhancer : roles.promptEnhancer;
+      if (role === undefined) {
+        throw new Error(`dsh-gearbox: no ${laneKind === 'edit' ? 'editEnhancer' : 'promptEnhancer'} role is configured (plugin settings → 图像通道 → 提示词优化模型)`);
+      }
+      const [providerName, provider] = resolveProvider(role.provider);
+      const apiKey = await resolveKey(provider);
+      const body = await callChat({
+        provider,
+        apiKey,
+        role,
+        prompt,
+        system: ENHANCER_SYSTEM[laneKind === 'edit' ? 'edit' : 't2i'],
+        params: gearParams(role, undefined),
+      });
+      const raw = extractText(body);
+      const rewritten = cleanPrompt(raw);
+      if (rewritten.length === 0) {
+        throw new Error(`dsh-gearbox: ${role.model} returned no text to use as a prompt`);
+      }
+      return { prompt: rewritten, raw, model: role.model, provider: providerName, protocol: role.protocol };
+    },
     /** Names this lane put into the command registry, for diagnostics. */
     commands: offCommand === undefined ? [] : ['image'],
   };

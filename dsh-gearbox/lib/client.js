@@ -75,6 +75,12 @@ window.__ModuleLoader__.load({
 				saved: "已保存",
 				textProtocols: "文本协议（写进 llm-pi-ai 路由）",
 				imageProtocols: "图像协议（本插件 Image Lane）",
+				imageMode: "图像模式",
+				imageModeHint: "开启后输入区出现提示词优化按钮（生图请用 /image 或 agent 模式）",
+				optimize: "优化提示词",
+				optimizing: "优化中…",
+				optimizeHint: "调用设置里绑定的提示词优化模型改写输入框内容",
+				draftUnavailable: "读不到输入框内容，无法写回（外壳结构变了？）",
 				openInTab: "独立页",
 				lastWrite: "上次写入",
 				noChange: "无变更",
@@ -112,6 +118,12 @@ window.__ModuleLoader__.load({
 				saved: "Saved",
 				textProtocols: "Text protocols (llm-pi-ai route)",
 				imageProtocols: "Image protocols (this plugin's lane)",
+				imageMode: "Image",
+				imageModeHint: "Shows the prompt-optimize button (generate images with /image or agent mode)",
+				optimize: "Optimize",
+				optimizing: "Optimizing…",
+				optimizeHint: "Rewrite the composer text with the configured enhancer model",
+				draftUnavailable: "Could not read the composer text back",
 				openInTab: "standalone",
 				lastWrite: "Last write",
 				noChange: "no change",
@@ -281,6 +293,20 @@ window.__ModuleLoader__.load({
 				borderBottom: "1px solid var(--dsw-alias-hairline)", marginBottom: "2px"
 			},
 			groupHeadMeta: { fontSize: "11.5px", fontWeight: 400, color: "var(--dsw-alias-label-tertiary)" },
+			composerRow: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
+			chip: {
+				font: "inherit", fontSize: "11.5px", lineHeight: 1.2, padding: "4px 9px",
+				borderRadius: "999px", border: "1px solid var(--dsw-alias-border-l2)",
+				background: "transparent", color: "var(--dsw-alias-label-secondary)", cursor: "pointer",
+				whiteSpace: "nowrap"
+			},
+			chipOn: {
+				borderColor: "var(--dsw-alias-brand-primary)",
+				background: "var(--dsw-alias-accent-soft, rgba(37,99,235,.14))",
+				color: "var(--dsw-alias-label-primary)"
+			},
+			chipDisabled: { opacity: 0.55, cursor: "default" },
+			composerNote: { fontSize: "11.5px", color: "var(--dsw-alias-state-warn-label, var(--dsw-alias-label-tertiary))" },
 			ddWrap: { position: "relative", display: "inline-flex", minWidth: 0, maxWidth: "100%" },
 			ddButton: {
 				font: "inherit", fontSize: "12.5px", color: "var(--dsw-alias-label-primary)",
@@ -340,6 +366,122 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+	/**
+	 * The composer's gearbox controls: an image-mode toggle, plus a prompt-optimize
+	 * button that only appears while image mode is on.
+	 *
+	 * Rendered through `conversation.input.dock`, whose spec passes `sessionId`. A
+	 * shipped first-party plugin (the input queue) uses the same seam, so the slot is
+	 * the supported way in.
+	 *
+	 * ## Reading and writing the draft
+	 *
+	 * The conversation service is reachable from here
+	 * (`ctx.sessions.scope(sessionId).get('conversation')`), but its draft API has not
+	 * been verified, so the draft is read and written through the composer's own
+	 * `<textarea>` instead: set `value` via the native setter and dispatch `input`,
+	 * which is what React listens to. That is the fragile part of this component —
+	 * if the shell ever renames its composer markup, the optimize button stops
+	 * writing back (it will not corrupt anything, it just won't take effect), and the
+	 * fix is to switch to the conversation service's API once its shape is confirmed.
+	 *
+	 * Everything else is server-derived: the toggle reads and writes `ui.imageMode`
+	 * through `/gears/api/own-config`, and optimization calls `/gears/api/enhance`.
+	 */
+	function makeComposerActions(React, t) {
+		return function ComposerActions() {
+			const onState = React.useState(false);
+			const on = onState[0];
+			const setOn = onState[1];
+			const busyState = React.useState(false);
+			const busy = busyState[0];
+			const setBusy = busyState[1];
+			const noteState = React.useState(null);
+			const note = noteState[0];
+			const setNote = noteState[1];
+
+			React.useEffect(() => {
+				let cancelled = false;
+				fetch(API + '/own-config')
+					.then((response) => response.json())
+					.then((payload) => {
+						if (cancelled || !payload.ok) return;
+						setOn((((payload.config || {}).ui || {}).imageMode) === true);
+					})
+					.catch(() => { /* 读不到就维持默认关，不影响输入 */ });
+				return () => { cancelled = true; };
+			}, []);
+
+			/** The composer's textarea — see the note above about why this is DOM-level. */
+			const draftElement = () => {
+				const seat = document.querySelector('[data-composer-seat]');
+				return (seat === null ? null : seat.querySelector('textarea')) || document.querySelector('textarea');
+			};
+			const readDraft = () => {
+				const element = draftElement();
+				return element === null ? '' : element.value;
+			};
+			const writeDraft = (text) => {
+				const element = draftElement();
+				if (element === null) return false;
+				const descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+				descriptor.set.call(element, text);
+				element.dispatchEvent(new Event('input', { bubbles: true }));
+				element.focus();
+				return true;
+			};
+
+			const toggle = async () => {
+				const next = !on;
+				setOn(next);
+				setNote(null);
+				try {
+					const payload = await fetch(API + '/own-config', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ ui: { imageMode: next } })
+					}).then((response) => response.json());
+					if (!payload.ok) throw new Error(payload.error || 'save failed');
+				} catch (error) {
+					setOn(!next);
+					setNote(String((error && error.message) || error));
+				}
+			};
+
+			const optimize = async () => {
+				const prompt = readDraft().trim();
+				if (prompt === '' || busy) return;
+				setBusy(true);
+				setNote(null);
+				try {
+					const payload = await fetch(API + '/enhance', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ prompt: prompt })
+					}).then((response) => response.json());
+					if (!payload.ok) throw new Error(payload.error || 'enhance failed');
+					if (!writeDraft(payload.prompt)) throw new Error(t('draftUnavailable'));
+				} catch (error) {
+					setNote(String((error && error.message) || error));
+				} finally {
+					setBusy(false);
+				}
+			};
+
+			const chip = (label, active, handler, disabled, title) => React.createElement('button', {
+				type: 'button',
+				title: title || label,
+				disabled: disabled === true,
+				style: Object.assign({}, STYLE.chip, active ? STYLE.chipOn : null, disabled === true ? STYLE.chipDisabled : null),
+				onClick: handler
+			}, label);
+
+			return React.createElement('div', { style: STYLE.composerRow },
+				chip(t('imageMode'), on, toggle, false, t('imageModeHint')),
+				on ? chip(busy ? t('optimizing') : t('optimize'), false, optimize, busy, t('optimizeHint')) : null,
+				note === null ? null : React.createElement('span', { style: STYLE.composerNote }, note));
+		};
+	}
 		function makeSection(React, t) {
 			const createElement = React.createElement.bind(React);
 			// 变长 children：写成 (tag, props, ...children)，漏了 children 会让整棵渲染树静默变空。
@@ -784,6 +926,19 @@ window.__ModuleLoader__.load({
 					}, Section)),
 					"dsh-gearbox: settings section"
 				);
+				// 输入条内的开关与优化按钮。该插槽的 spec 会传 sessionId；
+				// 组件目前不依赖它（草稿走 DOM），保留是为了将来切到会话服务 API。
+				const ComposerActions = makeComposerActions(React, t);
+				ctx.effect(
+					() => ctx.slots.inject("conversation.input.dock", () => ctx.slots.register({
+						name: "conversation.input.dock",
+						id: "gearbox-image-mode",
+						order: 30,
+						label: () => t("imageMode")
+					}, ComposerActions)),
+					"dsh-gearbox: composer controls"
+				);
+				ctx.logger?.info?.("dsh-gearbox: composer controls registered");
 				ctx.logger?.info?.("dsh-gearbox: settings section registered");
 			} catch (error) {
 				// Never rethrow during the renderer's boot: a failed section is a

@@ -595,8 +595,14 @@ console.log('\n=== client half (classic-script shape) ===');
       problems.push('client half registered no settings.section — the plugin would not appear in DSH settings');
     }
     for (const { options, component } of sections) {
-      if (options.name !== 'settings.section') problems.push(`section registered into slot "${options.name}" instead of settings.section`);
-      if (options.id !== 'dsh-gearbox') problems.push(`section id is "${options.id}"`);
+      // 每个插槽各查各的契约：设置分节要有模型行；输入条控件只要渲染出开关。
+      const EXPECT = {
+        'settings.section': { id: 'dsh-gearbox', needles: ['GLM-5.3-Flash', '无思考档位'] },
+        'conversation.input.dock': { id: 'gearbox-image-mode', needles: ['图像模式'] },
+      };
+      const expect = EXPECT[options.name];
+      if (expect === undefined) problems.push(`section registered into an unexpected slot "${options.name}"`);
+      else if (options.id !== expect.id) problems.push(`section id is "${options.id}", expected "${expect.id}" for ${options.name}`);
       if (typeof options.order !== 'number') problems.push('section order must be a number (the shell sorts by it)');
       const label = typeof options.label === 'function' ? options.label() : options.label;
       console.log(`  label        : ${JSON.stringify(label)}`);
@@ -685,7 +691,8 @@ console.log('\n=== client half (classic-script shape) ===');
         });
         const target = injected[injected.length - 1].c;
 
-        renderTarget = target;
+        // 取本次用伪 React 注册的、与当前插槽同名的实例；外层的 component 用的是 noop 桩。
+        renderTarget = (injected.find((entry) => entry.o.name === options.name) || injected[injected.length - 1]).c;
         doRender();
         console.log(`  renders(empty): ${renderError ? 'THREW ' + renderError.message : 'ok'}`);
         // 等 fetch 链跑完，setState 会触发一次带数据的重渲染
@@ -700,7 +707,9 @@ console.log('\n=== client half (classic-script shape) ===');
           console.log('  hooks        :', hooks.length, '| hooks[0]=', hooks[0] === null ? 'null' : 'set', '| effects:', [...seenEffects].join(','));
           console.log('  tree dump    :', flat.slice(0, 300));
           console.log(`  renders(data) : ok (${flat.length} bytes) | 含模型行: ${flat.includes('GLM-5.3-Flash')} | 含无思考档位提示: ${flat.includes('无思考档位')}`);
-          if (!flat.includes('GLM-5.3-Flash')) problems.push('data render is missing the model rows');
+          for (const needle of (expect ? expect.needles : [])) {
+            if (!flat.includes(needle)) problems.push(`${options.name} data render is missing "${needle}"`);
+          }
         }
         globalThis.fetch = realFetch;
       }
