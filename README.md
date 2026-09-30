@@ -8,7 +8,8 @@ DSH 接入第三方大模型时的两个堵点，一个插件解决。
 
 | 输入条优化 | 设置 → 模型变速箱 |
 |---|---|
-| ![输入条优化](docs/01-composer-optimize.png) | ![设置分节](docs/02-settings-gears-protocol.png) |
+| ![输入条优化](docs/01-composer-optimize.png) | ![思考档位预设](docs/03-gear-dropdown.png) |
+| ![协议切换](docs/02-settings-gears-protocol.png) | ![提示词优化模型](docs/04-enhancer-model.png) |
 
 ---
 
