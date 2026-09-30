@@ -598,6 +598,7 @@ console.log('\n=== client half (classic-script shape) ===');
       // 每个插槽各查各的契约：设置分节要有模型行；输入条控件只要渲染出开关。
       const EXPECT = {
         'settings.section': { id: 'dsh-gearbox', needles: ['GLM-5.3-Flash', '无思考档位'] },
+        'conversation.input.left': { id: 'gearbox-image-mode', needles: ['图像模式'] },
         'conversation.input.dock': { id: 'gearbox-image-mode', needles: ['图像模式'] },
       };
       const expect = EXPECT[options.name];

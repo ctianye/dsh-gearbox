@@ -929,15 +929,29 @@ window.__ModuleLoader__.load({
 				// 输入条内的开关与优化按钮。该插槽的 spec 会传 sessionId；
 				// 组件目前不依赖它（草稿走 DOM），保留是为了将来切到会话服务 API。
 				const ComposerActions = makeComposerActions(React, t);
-				ctx.effect(
-					() => ctx.slots.inject("conversation.input.dock", () => ctx.slots.register({
-						name: "conversation.input.dock",
-						id: "gearbox-image-mode",
-						order: 30,
-						label: () => t("imageMode")
-					}, ComposerActions)),
-					"dsh-gearbox: composer controls"
-				);
+				/**
+				 * 控件要落在输入条底部那一行，所以首选 `conversation.input.left`（左侧控件区，
+				 * 紧邻「+」与「工作区内修改」）。`conversation.input.dock` 会被渲染在输入条
+				 * **上方**，另起一行，位置不对。
+				 *
+				 * 两个插槽是否都对第三方开放并不能从代码确定，因此按顺序试：第一个注册成功
+				 * 即止，全部失败则本轮没有控件（不会抛错影响渲染层）。
+				 */
+				ctx.effect(() => {
+					for (const slot of ["conversation.input.left", "conversation.input.dock"]) {
+						try {
+							return ctx.slots.inject(slot, () => ctx.slots.register({
+								name: slot,
+								id: "gearbox-image-mode",
+								order: 30,
+								label: () => t("imageMode")
+							}, ComposerActions));
+						} catch (error) {
+							ctx.logger?.warn?.(`dsh-gearbox: ${slot} 不可注册，换下一个`, error);
+						}
+					}
+					return undefined;
+				}, "dsh-gearbox: composer controls");
 				ctx.logger?.info?.("dsh-gearbox: composer controls registered");
 				ctx.logger?.info?.("dsh-gearbox: settings section registered");
 			} catch (error) {
