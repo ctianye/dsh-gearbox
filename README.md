@@ -197,6 +197,5 @@ scripts measure what an endpoint actually honours — which is the one thing no 
 
 ## 已知限制
 
-- 插件**不做图像生成**（曾实现后移除；DSH 拒绝 assistant 图像块，图像模型也不能当对话模型）
 - 协议切换只覆盖三种文本协议；`api` 在 llm-pi-ai 里是路由级字段，按模型切换靠自动重新分组实现
 - 思考档位的写入目标是 `dsh-llm-pi-ai` 的配置；线上字段由其适配器按路由 `api` 翻译
