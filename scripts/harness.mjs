@@ -17,7 +17,7 @@
 import { pathToFileURL } from 'node:url';
 import { stat } from 'node:fs/promises';
 
-const PLUGIN = 'D:/dsh_pludge/dsh-gearbox/lib/index.js';
+const PLUGIN = 'D:/dsh_pludge/lib/index.js';
 const SANDBOX = 'D:/dsh_pludge/.workbuddy/tmp/harness-workspace';
 
 // ---- recorded interactions ----
@@ -347,7 +347,7 @@ if (face === undefined) {
 // profile. That exact failure shipped once, so it is guarded here.
 console.log('\n=== client half (classic-script shape) ===');
 {
-  const source = await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/dsh-gearbox/lib/client.js', 'utf8'));
+  const source = await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/lib/client.js', 'utf8'));
   const esm = /^\s*(?:import|export)\s/m.exec(source);
   console.log('ESM statements :', esm === null ? 'none' : `FOUND -> ${JSON.stringify(esm[0].trim())}`);
   if (esm !== null) problems.push(`client.js contains an ESM statement (${esm[0].trim()}), which is a syntax error in the classic-script plugin table`);
@@ -395,7 +395,7 @@ console.log('\n=== client half (classic-script shape) ===');
     // refuses to start. `lib/client.js` names SERVICES; `package.json`
     // → `dsh.client.inject` names PACKAGES (module seeds).
     const clientPackageIds = JSON.parse(
-      await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/dsh-gearbox/package.json', 'utf8')),
+      await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/package.json', 'utf8')),
     )?.dsh?.client?.inject ?? [];
     console.log('manifest pkgs  :', JSON.stringify(clientPackageIds));
     const SERVICE_PACKAGES = {
@@ -585,7 +585,7 @@ console.log('\n=== client half (classic-script shape) ===');
 // shipped once, for exactly that reason.)
 console.log('\n=== settings page (/gears/ui) ===');
 {
-  const { settingsPage } = await import('file:///D:/dsh_pludge/dsh-gearbox/lib/settings-page.js');
+  const { settingsPage } = await import('file:///D:/dsh_pludge/lib/settings-page.js');
   const html = settingsPage();
   for (const marker of ['id="status"', 'id="lastApply"', 'id="models"', 'id="lane"', 'id="flash"']) {
     if (!html.includes(marker)) problems.push(`settings page is missing ${marker}`);
@@ -612,7 +612,7 @@ console.log('\n=== settings page (/gears/ui) ===');
 
 // 原生渲染的设置分节必须指向自己的数据与独立页路径（iframe 已弃用，不再产生嵌套滚动）。
 {
-  const source = await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/dsh-gearbox/lib/client.js', 'utf8'));
+  const source = await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/lib/client.js', 'utf8'));
   for (const needle of ['/gears/ui', 'own-config', 'protocol', 'settings.section']) {
     if (!source.includes(needle)) problems.push(`client.js is missing ${needle}`);
   }

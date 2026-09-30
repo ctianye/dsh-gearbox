@@ -34,7 +34,8 @@ import { existsSync, mkdirSync, rmSync, symlinkSync, lstatSync, readdirSync } fr
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'dsh-gearbox');
+// 插件已提升到仓库根目录：scripts/ 的上一级就是插件包本身。
+const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Runtime packages the plugin's host half resolves by bare specifier. */
 const NEEDED = ['schemastery', 'dsh-tools', 'dsh-llm', 'cordis', 'cosmokit'];
