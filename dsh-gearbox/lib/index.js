@@ -687,9 +687,50 @@ export function apply(ctx, config) {
         if (req.method === 'POST' && url.pathname === '/gears/api/protocol') {
           // The prefix handler has already consumed the request body into `input`.
           const plan = input?.plan ?? {};
-          const invalid = Object.entries(plan).filter(([, api]) => !PROTOCOLS.includes(api));
-          if (invalid.length > 0) {
-            send(400, { ok: false, error: `未知协议：${invalid.map(([model, api]) => `${model} → ${api}`).join('、')}（可用：${PROTOCOLS.join(' / ')}）` });
+          // 文本协议写进 llm-pi-ai 的 `providers[].api`；图像协议是**本插件**的能力
+          // （llm-pi-ai 不认它们），所以写进 image.roles，落到 Image Lane 的角色上。
+          const IMAGE_ROLE_FOR = {
+            'images-generations': 'generator',
+            'images-edits': 'editor',
+            'images-variations': 'variator',
+          };
+          const textPlan = {};
+          const imagePlan = {};
+          for (const [model, api] of Object.entries(plan)) {
+            if (PROTOCOLS.includes(api)) textPlan[model] = api;
+            else if (IMAGE_ROLE_FOR[api] !== undefined) imagePlan[model] = api;
+            else {
+              send(400, { ok: false, error: `未知协议：${model} → ${api}（可用：${[...PROTOCOLS, ...Object.keys(IMAGE_ROLE_FOR)].join(' / ')}）` });
+              return;
+            }
+          }
+          let imageWrites = null;
+          if (Object.keys(imagePlan).length > 0) {
+            // 模型所在的路由就是它的供应商（llm-pi-ai 的 providers 是唯一的来源）。
+            const owners = providers(ctx);
+            const own = findEntry(ctx, NAME, 'gearbox');
+            if (own === undefined) {
+              send(503, { ok: false, error: 'dsh-gearbox: 找不到本插件的配置条目，无法写入图像协议' });
+              return;
+            }
+            const nextImage = structuredClone(image);
+            nextImage.roles = { ...(nextImage.roles ?? {}) };
+            for (const [model, api] of Object.entries(imagePlan)) {
+              const route = Object.keys(owners).find((name) => (owners[name].models ?? []).some((entry) => entry.id === model));
+              if (route === undefined) {
+                send(400, { ok: false, error: `找不到模型 ${model} 所属的供应商` });
+                return;
+              }
+              const role = IMAGE_ROLE_FOR[api];
+              nextImage.roles[role] = { ...(nextImage.roles[role] ?? {}), provider: route, model, protocol: api };
+            }
+            const current = own.options?.config ?? {};
+            await ctx.get('configEditor').edit(own, () => ({ ...current, image: nextImage }));
+            imageWrites = Object.fromEntries(Object.entries(nextImage.roles).map(([role, binding]) => [role, `${binding.provider}/${binding.model} @ ${binding.protocol}`]));
+          }
+
+          if (Object.keys(textPlan).length === 0) {
+            send(200, { ok: true, changed: imageWrites !== null, routes: null, image: imageWrites });
             return;
           }
           const entry = piAiEntry(ctx);
@@ -700,12 +741,12 @@ export function apply(ctx, config) {
           const editor = ctx.get('configEditor');
           const record = editor.configuration().find((candidate) => candidate.entry === entry);
           const live = mergeProviders(record?.inherited, record?.override ?? entry.options?.config ?? {});
-          const planned = splitProvidersByProtocol(live, plan);
+          const planned = splitProvidersByProtocol(live, textPlan);
           const changed = !isDeepStrictEqual(planned, live);
           let routes = null;
           if (changed) {
             await editor.edit(entry, (current, inherited) => {
-              const nextProviders = splitProvidersByProtocol(mergeProviders(inherited, current), plan);
+              const nextProviders = splitProvidersByProtocol(mergeProviders(inherited, current), textPlan);
               routes = Object.fromEntries(Object.entries(nextProviders).map(([route, profile]) => [route, {
                 api: profile.api,
                 models: (profile.models ?? []).map((model) => model.id),
@@ -713,7 +754,7 @@ export function apply(ctx, config) {
               return { ...current, providers: nextProviders };
             });
           }
-          send(200, { ok: true, changed, routes });
+          send(200, { ok: true, changed: changed || imageWrites !== null, routes, image: imageWrites });
           return;
         }
         send(404, { ok: false, error: `unknown gearbox route ${req.method} ${url.pathname}` });

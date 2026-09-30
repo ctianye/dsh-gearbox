@@ -63,9 +63,9 @@ window.__ModuleLoader__.load({
 				addMode: "＋ 添加模式",
 				saveCustom: "保存自定义",
 				cancel: "取消",
-				transportHint: "传输值留空：off 表示不发任何字段，其余档位默认发与模式同名的值。",
+				transportHint: "传输值（wire value）留空：off 表示不发任何字段，其余档位默认发与模式同名的值。",
 				recommended: "（推荐）",
-				liveHint: "「前端实际可用」来自适配器本身，是 composer 渲染档位选择器的依据。改动保存后立即生效。",
+				liveHint: "「前端实际可用」来自适配器本身（adapter），是 composer 渲染档位选择器的依据。改动保存后立即生效。",
 				enhancer: "提示词增强角色（图像通道）",
 				enhancerT2I: "文生图提示词扩写 PE-T2I",
 				enhancerI2I: "编辑指令改写 PE-I2I",
@@ -73,6 +73,8 @@ window.__ModuleLoader__.load({
 				modelField: "模型",
 				saveEnhancers: "保存增强角色",
 				saved: "已保存",
+				textProtocols: "文本协议（写进 llm-pi-ai 路由）",
+				imageProtocols: "图像协议（本插件 Image Lane）",
 				openInTab: "独立页",
 				lastWrite: "上次写入",
 				noChange: "无变更",
@@ -108,6 +110,8 @@ window.__ModuleLoader__.load({
 				modelField: "Model",
 				saveEnhancers: "Save enhancer roles",
 				saved: "Saved",
+				textProtocols: "Text protocols (llm-pi-ai route)",
+				imageProtocols: "Image protocols (this plugin's lane)",
 				openInTab: "standalone",
 				lastWrite: "Last write",
 				noChange: "no change",
@@ -137,9 +141,15 @@ window.__ModuleLoader__.load({
 		const LADDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 		const PROTOCOL_LABEL = {
-			"openai-responses": "OpenAI Responses",
-			"openai-completions": "OpenAI Chat Completions",
-			"anthropic-messages": "Anthropic Messages"
+			"openai-responses": "OpenAI Responses（响应式）",
+			"openai-completions": "OpenAI Chat Completions（对话补全）",
+			"anthropic-messages": "Anthropic Messages（消息）"
+		};
+
+		const IMAGE_PROTOCOL_LABEL = {
+			'images-generations': '图像 · /v1/images/generations（文生图）',
+			'images-edits': '图像 · /v1/images/edits（图编辑/图生图）',
+			'images-variations': '图像 · /v1/images/variations（图像变体）'
 		};
 
 		const ROLE_LABEL = {
@@ -206,28 +216,29 @@ window.__ModuleLoader__.load({
 		const STYLE = {
 			root: {
 				display: "flex", flexDirection: "column", color: "var(--dsw-alias-label-primary)",
-				fontFamily: "var(--dsw-font-family, inherit)", fontSize: "13px", lineHeight: 1.5
+				fontFamily: "var(--dsw-font-family, inherit)", fontSize: "12.5px", lineHeight: 1.55
 			},
 			head: {
 				display: "flex", alignItems: "baseline", gap: "10px",
 				padding: "2px 0 10px", borderBottom: "1px solid var(--dsw-alias-hairline)", marginBottom: "4px"
 			},
-			title: { fontSize: "14px", fontWeight: 650, color: "var(--dsw-alias-label-primary)" },
-			note: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" },
+			title: { fontSize: "13px", fontWeight: 650, color: "var(--dsw-alias-label-primary)" },
+			note: { fontSize: "11.5px", color: "var(--dsw-alias-label-secondary)" },
 			muted: { fontSize: "11.5px", color: "var(--dsw-alias-label-tertiary)" },
-			mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12.5px" },
+			mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px" },
 			card: {
 				background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)",
-				borderRadius: "12px", padding: "2px 16px", marginBottom: "12px"
+				borderRadius: "10px", padding: "2px 14px", marginBottom: "10px", minWidth: 0
 			},
 			row: {
-				display: "grid", gridTemplateColumns: "minmax(150px, 230px) 1fr", gap: "14px",
-				padding: "12px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "start"
+				display: "grid", gridTemplateColumns: "minmax(96px, 180px) minmax(0, 1fr)", gap: "12px",
+				padding: "10px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "start",
+				minWidth: 0
 			},
 			rowLast: { borderBottom: "none" },
 			rowLabel: { display: "flex", flexDirection: "column", gap: "2px", paddingTop: "4px" },
-			rowControl: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 },
-			controlLine: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" },
+			rowControl: { display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 },
+			controlLine: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", minWidth: 0 },
 			controlLabel: { fontSize: "11.5px", color: "var(--dsw-alias-label-secondary)", marginBottom: "3px" },
 			select: {
 				font: "inherit", fontSize: "12.5px", color: "var(--dsw-alias-label-primary)",
@@ -245,13 +256,14 @@ window.__ModuleLoader__.load({
 				padding: "7px 12px", borderRadius: "8px", fontSize: "12.5px",
 				background: "var(--dsw-alias-accent-soft, rgba(37,99,235,.12))", color: "var(--dsw-alias-label-primary)"
 			},
-			h3: { fontSize: "13px", margin: "14px 0 4px", fontWeight: 650 },
+			h3: { fontSize: "12.5px", margin: "12px 0 2px", fontWeight: 650, color: "var(--dsw-alias-label-primary)" },
 			roleRow: {
-				display: "grid", gridTemplateColumns: "minmax(150px, 230px) 1fr", gap: "14px",
-				padding: "10px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "center"
+				display: "grid", gridTemplateColumns: "minmax(96px, 180px) minmax(0, 1fr)", gap: "12px",
+				padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "center",
+				minWidth: 0
 			},
 			roleLabel: { fontSize: "12.5px", color: "var(--dsw-alias-label-primary)" },
-			fields: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" },
+			fields: { display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", minWidth: 0 },
 			field: { display: "flex", flexDirection: "column", gap: "3px", fontSize: "11.5px", color: "var(--dsw-alias-label-secondary)" },
 			modeBox: {
 				marginTop: "2px", padding: "10px", background: "var(--dsw-alias-bg-layer-2)",
@@ -261,6 +273,43 @@ window.__ModuleLoader__.load({
 			modeRow: { display: "flex", gap: "6px", alignItems: "center" },
 			modeInput: { width: "140px" },
 			rowActions: { display: "flex", gap: "8px", alignItems: "center" },
+			// 一级标题：供应商（DSH 路由）。比正文（12.5px）明显大一档，并用主文字色。
+			groupHead: {
+				display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap",
+				fontSize: "15px", fontWeight: 700, color: "var(--dsw-alias-label-primary)",
+				padding: "16px 0 4px", letterSpacing: "0.01em",
+				borderBottom: "1px solid var(--dsw-alias-hairline)", marginBottom: "2px"
+			},
+			groupHeadMeta: { fontSize: "11.5px", fontWeight: 400, color: "var(--dsw-alias-label-tertiary)" },
+			ddWrap: { position: "relative", display: "inline-flex", minWidth: 0, maxWidth: "100%" },
+			ddButton: {
+				font: "inherit", fontSize: "12.5px", color: "var(--dsw-alias-label-primary)",
+				background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l2)",
+				borderRadius: "8px", padding: "6px 10px", cursor: "pointer",
+				display: "flex", alignItems: "center", gap: "8px", minWidth: 0, maxWidth: "100%",
+				overflow: "hidden"
+			},
+			ddButtonOpen: { borderColor: "var(--dsw-alias-brand-primary)" },
+			ddLabel: { flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+			ddCaret: { marginLeft: "auto", color: "var(--dsw-alias-label-tertiary)", fontSize: "10px" },
+			ddMenu: {
+				position: "absolute", top: "calc(100% + 4px)", right: 0, left: "auto", zIndex: 40,
+				minWidth: "100%", width: "max-content", maxWidth: "min(64vw, 340px)", maxHeight: "300px",
+				overflowY: "auto", overflowX: "hidden",
+				background: "var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2))",
+				border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px",
+				boxShadow: "0 8px 24px rgba(0,0,0,.18)", padding: "4px"
+			},
+			ddGroup: {
+				fontSize: "11px", fontWeight: 650, color: "var(--dsw-alias-label-tertiary)",
+				padding: "7px 8px 3px"
+			},
+			ddItem: {
+				display: "block", width: "100%", textAlign: "left", font: "inherit", fontSize: "12px",
+				color: "var(--dsw-alias-label-primary)", background: "transparent", border: "none",
+				borderRadius: "6px", padding: "6px 8px", cursor: "pointer", whiteSpace: "normal", lineHeight: 1.4
+			},
+			ddItemActive: { background: "var(--dsw-alias-interactive-bg-active, var(--dsw-alias-accent-soft))" },
 			primaryButton: {
 				padding: "6px 14px", borderRadius: "8px", border: "1px solid transparent",
 				background: "var(--dsw-alias-button-primary-fill, var(--dsw-alias-accent))",
@@ -278,6 +327,19 @@ window.__ModuleLoader__.load({
 		 * @param {object} React  the shell's React
 		 * @param {(key: string) => string} t  localized label lookup
 		 */
+		/** 把选中的档位值还原成下拉按钮上显示的文案。 */
+		function makeGearLabel(presets) {
+			return (selected) => {
+				if (selected === '') return '';
+				if (selected === 'custom') return '';
+				const id = selected.slice('preset:'.length);
+				const preset = presets.find((entry) => entry.id === id);
+				if (preset === undefined) return id;
+				const gears = Object.keys(preset.levels || {}).filter((gear) => preset.levels[gear] !== null && preset.levels[gear] !== undefined);
+				return (preset.label || id) + ' · ' + gears.join('/');
+			};
+		}
+
 		function makeSection(React, t) {
 			const createElement = React.createElement.bind(React);
 			// 变长 children：写成 (tag, props, ...children)，漏了 children 会让整棵渲染树静默变空。
@@ -297,6 +359,44 @@ window.__ModuleLoader__.load({
 				const draftState = React.useState({});
 				const drafts = draftState[0];
 				const setDrafts = draftState[1];
+				// 哪一个自绘下拉是展开的（原生 select 的弹层样式由系统决定，改不动，所以自绘）。
+				const openState = React.useState(null);
+				const openKey = openState[0];
+				const setOpenKey = openState[1];
+
+				/**
+				 * A settings-page dropdown: a button plus our own popup list.
+				 *
+				 * Native `<select>` popups are drawn by the OS — their font, row height
+				 * and blue highlight cannot be themed, which is exactly what makes them
+				 * look out of place next to the shell's own controls. This draws the
+				 * list with the shell's tokens instead.
+				 *
+				 * @param k  unique key for open/close state
+				 * @param currentValue  the raw value, for the selected mark
+				 * @param currentLabel  what the button shows
+				 * @param options  `{ value, label, group? }` — `group` renders a heading
+				 */
+				const dropdown = (k, currentValue, currentLabel, options, onPick, maxWidth) => {
+					const open = openKey === k;
+					return createElement("div", { style: STYLE.ddWrap },
+						createElement("button", {
+							type: "button",
+							style: Object.assign({}, STYLE.ddButton, maxWidth ? { maxWidth: maxWidth } : null, open ? STYLE.ddButtonOpen : null),
+							onClick: () => setOpenKey(open ? null : k)
+						},
+							createElement("span", { style: STYLE.ddLabel }, currentLabel),
+							createElement("span", { style: STYLE.ddCaret }, "▾")),
+						open ? createElement("div", { style: STYLE.ddMenu },
+							options.map((option, i) => option.group
+								? createElement("div", { key: "g" + i, style: STYLE.ddGroup }, option.group)
+								: createElement("button", {
+									key: "o" + i,
+									type: "button",
+									style: Object.assign({}, STYLE.ddItem, option.value === currentValue ? STYLE.ddItemActive : null),
+									onClick: () => { setOpenKey(null); onPick(option.value); }
+								}, option.label))) : null);
+				};
 
 				React.useEffect(() => {
 					let cancelled = false;
@@ -428,7 +528,9 @@ window.__ModuleLoader__.load({
 				const models = ((data.inventory || {}).models) || [];
 				const vendors = ((data.presets || {}).vendors) || [];
 				const protocols = ((data.presets || {}).protocols) || [];
+				const imageProtocols = info.imageProtocols || [];
 				const presets = ((data.presets || {}).presets) || [];
+				const gearLabel = makeGearLabel(presets);
 				const providers = Object.keys(((info.lane || {}).providers) || {});
 				const capables = info.thinkingCapable || {};
 				const lastApply = info.lastApply;
@@ -439,8 +541,16 @@ window.__ModuleLoader__.load({
 						: [t("lastWrite"), String(lastApply.at || "").replace("T", " ").slice(0, 19), lastApply.changed ? "" : t("noChange"), t("attempts") + " " + String(lastApply.attempts ?? 1) + t("times")].filter((part) => part !== "").join(" · "))
 					: "";
 
-				// 每个模型一行：左标签 + 右控件，行间细分割线 —— 设置页的通用排布。
-				const rows = models.map((row, index) => {
+				// 按供应商分组：路由名作大标题，其下是该供应商的模型。
+				const rows = [];
+				let lastRoute = null;
+				for (const [index, row] of models.entries()) {
+					if (row.route !== lastRoute) {
+						rows.push(createElement("div", { key: "head-" + row.route, style: STYLE.groupHead },
+							createElement("span", null, row.route),
+							createElement("span", { style: STYLE.groupHeadMeta }, PROTOCOL_LABEL[row.api] || row.api)));
+						lastRoute = row.route;
+					}
 					const k = row.route + "|" + row.model;
 					const capable = capables[row.model] !== false;
 					const source = gearSource(config, row.route, row.model);
@@ -457,21 +567,23 @@ window.__ModuleLoader__.load({
 					if (!capable) {
 						gearControl = h("div", { style: STYLE.dim }, t("noGears"));
 					} else {
-						const options = [createElement("option", { key: "unset", value: "" },
-							t("unset") + (suggested.length ? " · " + suggested[0] + t("recommended") : ""))];
+						const gearOptions = [{ value: "", label: t("unset") + (suggested.length ? " · " + suggested[0] + t("recommended") : "") }];
 						for (const vendor of vendors) {
-							const children = (vendor.models || []).map((model) =>
-								createElement("option", {
-									key: vendor.id + "/" + model.id, value: "preset:" + model.id
-								}, (model.label || model.id) + " · " + (model.gears || []).join("/")));
-							options.push(createElement("optgroup", { key: vendor.id, label: vendor.label }, children));
+							gearOptions.push({ group: vendor.label });
+							for (const model of vendor.models || []) {
+								gearOptions.push({
+									value: "preset:" + model.id,
+									label: (model.label || model.id) + " · " + (model.gears || []).join("/")
+								});
+							}
 						}
-						options.push(createElement("option", { key: "custom", value: "custom" }, t("custom")));
-						const gearSelect = h("select", {
-							style: Object.assign({}, STYLE.select, { minWidth: "300px" }),
-							value: selected,
-							onChange: (event) => {
-								const value = event.target.value;
+						gearOptions.push({ value: "custom", label: t("custom") });
+						const gearSelect = dropdown(
+							"gear:" + k,
+							selected,
+							selected === "custom" ? t("custom") : (selected === "" ? t("unset") + (suggested.length ? " · " + suggested[0] : "") : gearLabel(selected)),
+							gearOptions,
+							(value) => {
 								if (value === "") { saveGears(row.route, row.model, { kind: "custom", gears: {} }); return; }
 								if (value === "custom") {
 									const preset = presets.find((entry) => entry.id === (suggested[0] || ""));
@@ -485,8 +597,8 @@ window.__ModuleLoader__.load({
 									return; // 等用户在编辑器里点「保存自定义」
 								}
 								saveGears(row.route, row.model, { kind: "preset", id: value.slice("preset:".length) });
-							}
-						}, options);
+							},
+							"100%");
 
 						const modeRows = (draft || []).map((entry, index2) =>
 							h("div", { key: "row" + index2, style: STYLE.modeRow },
@@ -548,14 +660,22 @@ window.__ModuleLoader__.load({
 								: null);
 					}
 
-					// ---- 协议 + 前端实际可用 ----
-					const protocolSelect = h("select", {
-						style: Object.assign({}, STYLE.select, { minWidth: "200px" }),
-						value: row.api,
-						onChange: (event) => switchProtocol(row.model, event.target.value)
-					}, protocols.map((api) => createElement("option", { key: api, value: api }, PROTOCOL_LABEL[api] || api)));
+					// ---- 协议：文本协议写进 llm-pi-ai，图像协议写进本插件的 Image Lane ----
+					const protocolOptions = [
+						{ group: t("textProtocols") },
+						...protocols.map((api) => ({ value: api, label: PROTOCOL_LABEL[api] || api })),
+						{ group: t("imageProtocols") },
+						...imageProtocols.map((api) => ({ value: api, label: IMAGE_PROTOCOL_LABEL[api] || api })),
+					];
+					const protocolSelect = dropdown(
+						"proto:" + k,
+						row.api,
+						PROTOCOL_LABEL[row.api] || row.api,
+						protocolOptions,
+						(value) => switchProtocol(row.model, value),
+						"100%");
 
-					return createElement("div", { key: k, style: rowStyle },
+					const element = createElement("div", { key: k, style: rowStyle },
 						createElement("div", { style: STYLE.rowLabel },
 							createElement("span", { style: STYLE.mono }, row.model),
 							createElement("span", { style: STYLE.muted }, row.route)),
@@ -569,7 +689,8 @@ window.__ModuleLoader__.load({
 									createElement("div", { style: STYLE.controlLabel }, t("advertised")),
 									createElement("span", { style: advertised.length ? STYLE.good : STYLE.dim },
 										advertised.length ? advertised.join("  ") : "—")))));
-				});
+					rows.push(element);
+				}
 
 				// 图像通道的两个增强角色：只有"哪个供应商的哪个模型"是这里要配的，
 				// 生成/编辑模型与协议统一在上面的模型列表里改。

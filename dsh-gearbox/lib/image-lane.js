@@ -67,7 +67,7 @@ import { basename, join, resolve as resolvePath, extname } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
 /** Endpoint families the lane can speak. */
-export const IMAGE_PROTOCOLS = ['images-generations', 'images-edits', 'chat'];
+export const IMAGE_PROTOCOLS = ['images-generations', 'images-edits', 'images-variations', 'chat'];
 
 /** Request-body dialects for `images-generations`. */
 export const IMAGE_BODY_STYLES = ['openai', 'siliconflow'];
@@ -79,6 +79,7 @@ export const IMAGE_BODY_STYLES = ['openai', 'siliconflow'];
 export const IMAGE_ROLES = [
   { id: 'generator', label: '文生图生成器', protocols: ['images-generations', 'chat'] },
   { id: 'editor', label: '图生图编辑器', protocols: ['images-edits', 'chat'] },
+  { id: 'variator', label: '图像变体', protocols: ['images-variations'] },
   { id: 'promptEnhancer', label: '文生图提示词增强 PE-T2I', protocols: ['chat'] },
   { id: 'editEnhancer', label: '编辑指令改写 PE-I2I', protocols: ['chat'] },
 ];
@@ -385,6 +386,36 @@ async function callEdits({ provider, apiKey, role, prompt, files, params }) {
   return res.json();
 }
 
+/**
+ * POST /v1/images/variations — multipart with only the source image, no prompt.
+ *
+ * Same shape as {@link callEdits} minus the instruction: the endpoint returns
+ * variants of the image it is given. `n` is how many variants to ask for.
+ */
+async function callVariations({ provider, apiKey, role, files, params }) {
+  const { authorization, 'content-type': _dropped, ...extra } = headersFor(provider, apiKey);
+  const form = new FormData();
+  const field = role.imageField || DEFAULT_IMAGE_FIELD;
+  for (const file of files.slice(0, role.maxInputImages ?? DEFAULT_MAX_INPUT_IMAGES)) {
+    form.append(field, new Blob([file.bytes], { type: file.mime }), file.name);
+  }
+  form.append('model', role.model);
+  form.append('n', String(params.n ?? 1));
+  const size = params.size ?? role.size;
+  if (size !== undefined) form.append('size', String(size));
+  for (const [key, value] of Object.entries(params)) {
+    if (key === 'n' || key === 'size') continue;
+    form.append(key, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  const res = await request(String(provider.baseURL).replace(/\/+$/, '') + '/images/variations', {
+    method: 'POST',
+    headers: { authorization, ...extra },
+    body: form,
+  }, role.timeoutMs);
+  if (!res.ok) throw new Error(role.id + ' ' + role.model + ' HTTP ' + res.status + ': ' + await res.text().catch(() => ''));
+  return res.json();
+}
+
 // ------------------------------------------------------------------ registration
 
 /**
@@ -492,6 +523,15 @@ export function registerImageLane(ctx, { image }) {
     let body;
     if (role.protocol === 'images-generations') {
       body = await callGenerations({ provider, apiKey, role, prompt: finalPrompt, params });
+    } else if (role.protocol === 'images-variations') {
+      if (references.length === 0) {
+        throw new Error('dsh-gearbox: protocol images-variations needs one source image');
+      }
+      body = await callVariations({
+        provider, apiKey, role,
+        files: await referenceFiles(references, cwd),
+        params,
+      });
     } else if (role.protocol === 'images-edits') {
       if (references.length === 0) {
         throw new Error('dsh-gearbox: protocol images-edits needs at least one reference image');
