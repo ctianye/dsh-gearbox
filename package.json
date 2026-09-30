@@ -34,7 +34,9 @@
     "locale",
     "cordis.patch.yml",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "docs",
+    "screenshots.json"
   ],
   "dsh": {
     "bundle": {
@@ -48,5 +50,10 @@
       "platform": "web"
     },
     "manifestVersion": 1
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctianye/dsh_gearbox.git"
+  },
+  "license": "MIT"
 }
