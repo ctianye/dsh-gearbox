@@ -32,6 +32,7 @@ import {
 } from './presets.js';
 import { registerImageLane } from './image-lane.js';
 import { settingsPage } from './settings-page.js';
+import { isThinkingCapable, vendorTree } from './vendor-catalog.js';
 
 export const name = 'dsh-gearbox';
 
@@ -94,6 +95,61 @@ function findEntry(ctx, packageName, rowId) {
  * silently drop that route's `baseURL` / `apiKeyEnv` / `api`. Merging both
  * layers here is what keeps a write non-destructive.
  */
+/**
+ * Short route-id suffix per protocol, for auto-created provider rows.
+ */
+const API_SUFFIX = {
+  'openai-completions': 'completions',
+  'openai-responses': 'responses',
+  'anthropic-messages': 'anthropic',
+};
+
+/**
+ * Move models onto providers whose `api` matches the plan.
+ *
+ * `llm-pi-ai` types `api` on the **provider**, so a per-model protocol choice is
+ * realised by regrouping: the models that keep the route's own protocol stay
+ * where they are, and each other protocol group moves to a cloned route
+ * (`<route>-<suffix>`) that copies the connection facts (`baseURL`,
+ * `apiKeyEnv`, headers) and swaps `api`.
+ *
+ * Routes that carry only `modelOverrides` (no `models` list) have no per-model
+ * entries to move, so they pass through untouched.
+ *
+ * @param {Record<string, object>} providers  merged provider profiles
+ * @param {Record<string, string>} plan       model id -> target protocol
+ * @returns {Record<string, object>}
+ */
+function splitProvidersByProtocol(providers, plan) {
+  const out = {};
+  for (const [route, profile] of Object.entries(providers ?? {})) {
+    const models = Array.isArray(profile.models) ? profile.models : [];
+    if (models.length === 0) {
+      out[route] = profile;
+      continue;
+    }
+    const groups = new Map();
+    for (const model of models) {
+      const target = plan?.[model?.id] ?? profile.api;
+      if (!groups.has(target)) groups.set(target, []);
+      groups.get(target).push(model);
+    }
+    for (const [api, group] of groups) {
+      if (api === profile.api || api === undefined) {
+        const bucket = out[route] ?? { ...profile, models: [] };
+        out[route] = bucket;
+        bucket.models.push(...group);
+        continue;
+      }
+      let id = `${route}-${API_SUFFIX[api] ?? api.replace(/[^a-z0-9]+/gi, '-')}`;
+      while (out[id] !== undefined) id = `${id}-2`;
+      const { models: _moved, modelOverrides: _kept, api: _old, ...connection } = profile;
+      out[id] = { ...connection, api, displayName: `${profile.displayName ?? route} · ${(API_SUFFIX[api] ?? api)}`, models: [...group] };
+    }
+  }
+  return out;
+}
+
 function mergeProviders(inherited, current) {
   const merged = { ...(inherited?.providers ?? {}) };
   for (const [route, profile] of Object.entries(current?.providers ?? {})) {
@@ -562,6 +618,12 @@ export function apply(ctx, config) {
             applyMode,
             lastApply,
             routes: Object.keys(providers(ctx)),
+            // Which configured models have a thinking control at all. The settings
+            // page hides the gear dropdown for the rest — offering a dial an
+            // endpoint does not have is worse than offering none.
+            thinkingCapable: Object.fromEntries(
+              Object.entries(providers(ctx)).flatMap(([, profile]) => (profile.models ?? []).map((model) => [model.id, isThinkingCapable(model.id)])),
+            ),
             // Image Lane: providers are connection profiles; each role binds its
             // own model + protocol, which is what `lane.roles` reports.
             imageProviders: Object.keys(laneInfo().providers ?? {}),
@@ -577,7 +639,7 @@ export function apply(ctx, config) {
           return;
         }
         if (req.method === 'GET' && url.pathname === '/gears/api/presets') {
-          send(200, { ok: true, presets: PRESETS });
+          send(200, { ok: true, presets: PRESETS, vendors: vendorTree(PRESETS), protocols: PROTOCOLS });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/gears/api/inventory') {
@@ -611,6 +673,47 @@ export function apply(ctx, config) {
         if (req.method === 'POST' && url.pathname === '/gears/api/apply') {
           const outcome = await applyRules(ctx, input.rules ?? []);
           send(200, { ok: true, ...record({ source: 'http', ...outcome }) });
+          return;
+        }
+        /**
+         * Per-model protocol switching.
+         *
+         * `llm-pi-ai` types `api` on the provider, so "this model speaks a
+         * different protocol" is realised by regrouping models across routes —
+         * see {@link splitProvidersByProtocol}. Generic on purpose: the same
+         * dropdown serves text and image models, and no image-specific surface
+         * exists.
+         */
+        if (req.method === 'POST' && url.pathname === '/gears/api/protocol') {
+          // The prefix handler has already consumed the request body into `input`.
+          const plan = input?.plan ?? {};
+          const invalid = Object.entries(plan).filter(([, api]) => !PROTOCOLS.includes(api));
+          if (invalid.length > 0) {
+            send(400, { ok: false, error: `未知协议：${invalid.map(([model, api]) => `${model} → ${api}`).join('、')}（可用：${PROTOCOLS.join(' / ')}）` });
+            return;
+          }
+          const entry = piAiEntry(ctx);
+          if (entry === undefined) {
+            send(503, { ok: false, error: `no ${PI_AI} entry is mounted` });
+            return;
+          }
+          const editor = ctx.get('configEditor');
+          const record = editor.configuration().find((candidate) => candidate.entry === entry);
+          const live = mergeProviders(record?.inherited, record?.override ?? entry.options?.config ?? {});
+          const planned = splitProvidersByProtocol(live, plan);
+          const changed = !isDeepStrictEqual(planned, live);
+          let routes = null;
+          if (changed) {
+            await editor.edit(entry, (current, inherited) => {
+              const nextProviders = splitProvidersByProtocol(mergeProviders(inherited, current), plan);
+              routes = Object.fromEntries(Object.entries(nextProviders).map(([route, profile]) => [route, {
+                api: profile.api,
+                models: (profile.models ?? []).map((model) => model.id),
+              }]));
+              return { ...current, providers: nextProviders };
+            });
+          }
+          send(200, { ok: true, changed, routes });
           return;
         }
         send(404, { ok: false, error: `unknown gearbox route ${req.method} ${url.pathname}` });

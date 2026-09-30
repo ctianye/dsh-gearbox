@@ -518,6 +518,9 @@ console.log('\n=== client half (classic-script shape) ===');
         if (typeof type === 'function') return type(props ?? {});
         return element;
       },
+      // 组件用了 hooks：桩只求"能跑完渲染函数"，不真正管理状态
+      useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+      useEffect: () => {},
     };
     const client = loaded.factory((id) => (id === 'react' ? reactStub : undefined));
     console.log('exports        :', Object.keys(client).join(', '));
@@ -599,15 +602,107 @@ console.log('\n=== client half (classic-script shape) ===');
       console.log(`  label        : ${JSON.stringify(label)}`);
       if (typeof label !== 'string' || label.trim().length === 0) problems.push('section label must be a non-empty string (the shell renders it in the nav)');
       // Run the component. A throw here is a blank settings section in the real app.
-      try {
-        const tree = component();
+      // 桩的 useEffect 不执行，组件会停在"加载中"分支 —— 所以断言分两层：
+      // 渲染不抛 + 模块源码里确有独立页/API 路径（真数据渲染走不到时也不漏检）。
+      // 行为级渲染验证：桩出来的"伪 React"跑通 hooks，并用 fetch 桩喂真实形状的数据，
+      // 从而覆盖**有数据**分支 —— 真实应用里，这一分支抛错的表现就是"设置面板一片空白"。
+      {
+        const hooks = [];
+        const seenEffects = new Set();
+        let cursor = 0;
+        let tree = null;
+        let renderError = null;
+        // 必须渲染当前被测的那个组件实例：不然用的还是上一段测试留下的 noop hooks。
+        let renderTarget = null;
+        const doRender = () => {
+          cursor = 0;
+          try {
+            tree = renderTarget();
+            renderError = null;
+          } catch (error) {
+            renderError = error;
+          }
+        };
+        const fakeReact = {
+          createElement: (type, props, ...children) => {
+            if (typeof type === 'function') return type(props ?? {});
+            return { type, props: props ?? {}, children };
+          },
+          useState: (init) => {
+            const i = cursor++;
+            if (hooks[i] === undefined) hooks[i] = typeof init === 'function' ? init() : init;
+            return [hooks[i], (next) => {
+              hooks[i] = typeof next === 'function' ? next(hooks[i]) : next;
+              doRender();
+            }];
+          },
+          useEffect: (fn) => {
+            const i = cursor++;
+            if (seenEffects.has(i)) return;
+            seenEffects.add(i);
+            fn();
+          },
+        };
+
+        // 数据形状取自真实端点（/gears/api/*），不猜字段名。
+        const FIXTURES = {
+          '/gears/api/info': {
+            ok: true, routes: ['ujn'], rules: 1, applyMode: 'auto', thinkingCapable: { 'GLM-5.3-Flash': true, 'Qwen-Image-2.1': false },
+            lastApply: { at: '2026-09-30T09:00:00.000Z', source: 'auto', changed: false, attempts: 1, applied: [], rejected: [] },
+            lane: { providers: { ujn: { baseURL: 'https://x/v1', credentialRef: 'K' } }, roles: {}, defaultProvider: 'ujn', saveDir: '.dsh-gearbox', autoEnhance: true },
+            imageProtocols: ['chat'], imageRoles: ['generator'],
+          },
+          '/gears/api/inventory': {
+            ok: true,
+            models: [
+              { route: 'ujn', model: 'GLM-5.3-Flash', api: 'openai-responses', declaredReasoningEfforts: { off: null, high: 'high', max: 'max' }, capabilities: { efforts: ['off', 'high', 'max'] }, suggestedFit: ['glm-gateway'], suggested: ['glm-gateway', 'glm-zai'] },
+              { route: 'ujn', model: 'Qwen-Image-2.1', api: 'openai-responses', declaredReasoningEfforts: null, capabilities: { efforts: null }, suggestedFit: [], suggested: [] },
+            ],
+          },
+          '/gears/api/presets': {
+            ok: true,
+            presets: [{ id: 'glm-gateway', label: '智谱 GLM（经网关）', levels: { off: null, high: 'high', max: 'max' } }],
+            vendors: [{ id: 'zhipu', label: '智谱（GLM）', models: [{ id: 'glm-gateway', label: '智谱 GLM（经网关）', gears: ['off', 'high', 'max'] }] }],
+            protocols: ['openai-responses', 'openai-completions', 'anthropic-messages'],
+          },
+          '/gears/api/own-config': {
+            ok: true,
+            config: { applyMode: 'auto', rules: [{ route: 'ujn', model: 'GLM-5.3-Flash', preset: 'glm-gateway' }], customEfforts: [], image: { roles: { promptEnhancer: { provider: 'ujn', model: 'PE-T2I' } } } },
+          },
+        };
+        const realFetch = globalThis.fetch;
+        const fetched = [];
+        globalThis.fetch = async (url) => { fetched.push(String(url)); return { ok: true, json: async () => FIXTURES[String(url)] ?? { ok: true } }; };
+
+        const section = loaded.factory((id) => (id === 'react' ? Object.assign({}, reactStub, fakeReact) : undefined));
+        const injected = [];
+        section.apply({
+          logger: { info: () => {}, warn: (...a) => console.log('[client warn]', ...a), debug: () => {} },
+          locale: { register: () => {} },
+          slots: { inject: (n, run) => run(), register: (o, c) => { injected.push({ o, c }); return () => {}; } },
+          effect: (fn) => fn(),
+          get: () => undefined,
+        });
+        const target = injected[injected.length - 1].c;
+
+        renderTarget = target;
+        doRender();
+        console.log(`  renders(empty): ${renderError ? 'THREW ' + renderError.message : 'ok'}`);
+        // 等 fetch 链跑完，setState 会触发一次带数据的重渲染
+        await new Promise((resolve) => setTimeout(resolve, 60));
         const flat = JSON.stringify(tree);
-        console.log(`  renders      : ${tree === undefined || tree === null ? 'NOTHING' : 'ok'} | embeds ${flat.includes('/gears/ui') ? 'the settings page' : 'nothing'}`);
-        if (tree === undefined || tree === null) problems.push('the settings section component renders nothing');
-        if (!flat.includes('/gears/ui')) problems.push('the settings section does not reference the plugin settings page');
-        if (flat.includes('undefined?')) problems.push('the settings section produced an undefined value');
-      } catch (error) {
-        problems.push(`settings section threw while rendering: ${error.message}`);
+        if (renderError) {
+          problems.push(`settings section threw on the data render: ${renderError.message}`);
+        } else if (!flat || flat === 'null') {
+          problems.push('settings section rendered nothing once data arrived');
+        } else {
+          console.log('  fetched      :', fetched.join(' '));
+          console.log('  hooks        :', hooks.length, '| hooks[0]=', hooks[0] === null ? 'null' : 'set', '| effects:', [...seenEffects].join(','));
+          console.log('  tree dump    :', flat.slice(0, 300));
+          console.log(`  renders(data) : ok (${flat.length} bytes) | 含模型行: ${flat.includes('GLM-5.3-Flash')} | 含无思考档位提示: ${flat.includes('无思考档位')}`);
+          if (!flat.includes('GLM-5.3-Flash')) problems.push('data render is missing the model rows');
+        }
+        globalThis.fetch = realFetch;
       }
     }
     for (const key of Object.keys(globals)) delete globalThis[key];
@@ -793,7 +888,7 @@ console.log('\n=== settings page (/gears/ui) ===');
 {
   const { settingsPage } = await import('file:///D:/dsh_pludge/dsh-gearbox/lib/settings-page.js');
   const html = settingsPage();
-  for (const marker of ['id="status"', 'id="lastApply"', 'id="gears"', 'id="lane"', 'id="flash"']) {
+  for (const marker of ['id="status"', 'id="lastApply"', 'id="models"', 'id="lane"', 'id="flash"']) {
     if (!html.includes(marker)) problems.push(`settings page is missing ${marker}`);
   }
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
@@ -814,6 +909,15 @@ console.log('\n=== settings page (/gears/ui) ===');
   // The embedded form needs the theme handoff, or a dark shell gets a white panel.
   if (!html.includes('data-theme')) problems.push('settings page has no theme hook for the settings-section iframe');
   console.log('html bytes       :', html.length);
+}
+
+// 原生渲染的设置分节必须指向自己的数据与独立页路径（iframe 已弃用，不再产生嵌套滚动）。
+{
+  const source = await import('node:fs/promises').then((fs) => fs.readFile('D:/dsh_pludge/dsh-gearbox/lib/client.js', 'utf8'));
+  for (const needle of ['/gears/ui', 'own-config', 'protocol', 'settings.section']) {
+    if (!source.includes(needle)) problems.push(`client.js is missing ${needle}`);
+  }
+  if (/createElement\(\s*[\"']iframe/.test(source)) problems.push('client.js still renders an iframe — that is what produced the double scrollbar');
 }
 
 console.log('\n=== applyRules -> written config ===');
