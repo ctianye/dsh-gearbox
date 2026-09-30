@@ -280,10 +280,7 @@ console.log('services provided :', calls.provides.join(', ') || '(none)');
 console.log('effects           :', calls.effects.length);
 
 const problems = [];
-if (!calls.tools.some((t) => t.name === 'image_generate')) problems.push('image_generate not registered');
 if (!calls.routes.some((r) => r.path === '/gears/api')) problems.push('panel prefix route missing');
-if (!calls.routes.some((r) => r.path === '/gears/api/image')) problems.push('image route missing');
-if (!calls.commands.some((c) => c.name === 'image')) problems.push('/image command not registered');
 if (calls.provides.length === 0) problems.push('no service provided');
 
 console.log('\n=== registered slash commands ===');
@@ -303,7 +300,7 @@ for (const path of ['/gears/api/info', '/gears/api/presets', '/gears/api/invento
   const { status, json } = await invokeRoute({ ...prefix, path }, { method: 'GET' });
   const size = json?.presets?.length ?? json?.models?.length ?? Object.keys(json ?? {}).length;
   console.log(`GET  ${path.padEnd(24)} -> ${status} (${size} entries)`);
-  if (status !== 200 || json?.ok !== true) problems.push(`${path} not OK`);
+  if (status !== 200 || json?.ok !== true) { problems.push(`${path} not OK: ${JSON.stringify(json).slice(0,200)}`); }
   if (path.endsWith('/presets') && (json?.presets?.length ?? 0) < 16) problems.push('preset library short of 16 entries');
 }
 
@@ -341,145 +338,6 @@ if (face === undefined) {
   // Every preset must also come out of YAML export non-empty and well-formed.
   const yamlAll = face.exportYaml(face.presets().map((preset) => ({ model: 'sweep', preset: preset.id })));
   if (!yamlAll.includes('- id: sweep')) problems.push('YAML export produced nothing usable');
-}
-
-// ---- exercise the tool against a stubbed network ----
-const tool = calls.tools.find((t) => t.name === 'image_generate');
-if (tool) {
-  console.log('\n=== image_generate tool ===');
-  console.log('parameters      :', Object.keys(tool.parameters ?? {}).join(', '));
-  const declaredRequired = tool.parameters?.required ?? [];
-  console.log('required        :', declaredRequired.join(', ') || '(none)');
-  if (!declaredRequired.includes('prompt')) problems.push('prompt not marked required');
-  if (typeof tool.output?.render !== 'function') problems.push('output.render missing');
-
-  // Capture every outbound request so the two lanes can be told apart by shape.
-  const originalFetch = globalThis.fetch;
-  let sent = [];
-  const stubFetch = () => {
-    sent = [];
-    globalThis.fetch = async (url, init) => {
-      sent.push({ url: String(url), body: JSON.parse(init?.body ?? '{}') });
-      if (sent.length === 1) {
-        return { ok: true, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ choices: [{ message: { content: 'EXPANDED PROMPT' } }] }) };
-      }
-      const b64 = Buffer.from('PNGDATA').toString('base64');
-      return { ok: true, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ choices: [{ message: { images: [{ image_url: { url: `data:image/png;base64,${b64}` } }] } }] }) };
-    };
-  };
-
-  // -- lane 1: text to image --
-  stubFetch();
-  try {
-    const value = await tool.execute({ prompt: '画一个清晨的湖' }, { agent: { session: { header: { cwd: SANDBOX } } } });
-    console.log('\n[t2i] result      :', JSON.stringify({ file: value.file, provider: value.provider, lane: value.lane }));
-    console.log('[t2i] fetch calls :', sent.length, '(expect 2: enhancer + generator)');
-    if (sent.length !== 2) problems.push(`t2i: expected 2 fetch calls, saw ${sent.length}`);
-    if (value.lane !== 't2i') problems.push(`t2i: lane reported as ${value.lane}`);
-    if (sent[0]?.body?.model !== 'Qwen-Image-PE-T2I') problems.push('t2i: first call was not the PE-T2I enhancer');
-    if (typeof sent[0]?.body?.messages?.[1]?.content !== 'string') problems.push('t2i: enhancer received a non-text user message');
-    const info = await stat(value.file).catch(() => null);
-    console.log('[t2i] file written:', info ? `${info.size} bytes` : 'MISSING');
-    if (!info) problems.push('t2i: image not written to disk');
-    const rendered = tool.output.render({}, value);
-    console.log('[t2i] render head :', rendered[0].text.split('\n')[0]);
-    if (!rendered[0].text.includes(value.file.replaceAll('\\', '/'))) problems.push('render does not surface the saved path');
-  } catch (error) {
-    problems.push(`t2i failed: ${error.message}`);
-  }
-
-  // -- lane 2: image to image (the reference must reach BOTH calls) --
-  const reference = `${SANDBOX}/reference.png`;
-  const { mkdir, writeFile } = await import('node:fs/promises');
-  await mkdir(SANDBOX, { recursive: true });
-  await writeFile(reference, Buffer.from('REFERENCE-PNG'));
-  stubFetch();
-  try {
-    const value = await tool.execute({ prompt: '把天空改成夜晚', image: 'reference.png' }, { agent: { session: { header: { cwd: SANDBOX } } } });
-    console.log('\n[i2i] result      :', JSON.stringify({ provider: value.provider, lane: value.lane }));
-    console.log('[i2i] fetch calls :', sent.length, '(expect 2: edit-enhancer + generator)');
-    if (sent.length !== 2) problems.push(`i2i: expected 2 fetch calls, saw ${sent.length}`);
-    if (value.lane !== 'edit') problems.push(`i2i: lane reported as ${value.lane} (a reference must select the edit lane)`);
-    if (sent[0]?.body?.model !== 'Qwen-Image-PE-I2I') problems.push(`i2i: first call targeted ${sent[0]?.body?.model}, expected the PE-I2I edit enhancer`);
-    const enhancerParts = sent[0]?.body?.messages?.[1]?.content;
-    const enhancerHasImage = Array.isArray(enhancerParts) && enhancerParts.some((part) => part?.type === 'image_url' && String(part.image_url?.url).startsWith('data:image/png;base64,'));
-    console.log('[i2i] enhancer got a reference image part:', enhancerHasImage);
-    if (!enhancerHasImage) problems.push('i2i: the edit enhancer was not given the reference image');
-    const generatorParts = sent[1]?.body?.messages?.[0]?.content;
-    const generatorHasImage = Array.isArray(generatorParts) && generatorParts.some((part) => part?.type === 'image_url');
-    console.log('[i2i] generator  got a reference image part:', generatorHasImage);
-    if (!generatorHasImage) problems.push('i2i: the generator was not given the reference image (image-to-image would silently become text-to-image)');
-    const rendered = tool.output.render({}, value);
-    console.log('[i2i] render head :', rendered[0].text.split('\n')[0]);
-    if (!rendered[0].text.startsWith('已编辑图片')) problems.push('i2i: render does not distinguish an edit from a generation');
-  } catch (error) {
-    problems.push(`i2i failed: ${error.message}`);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
-
-// ---- exercise the slash command against a stubbed network ----
-const imageCommand = calls.commands.find((c) => c.name === 'image');
-if (imageCommand) {
-  console.log('\n=== /image command ===');
-  const originalFetch = globalThis.fetch;
-  let sent = [];
-  globalThis.fetch = async (url, init) => {
-    sent.push({ url: String(url), body: JSON.parse(init?.body ?? '{}') });
-    const b64 = Buffer.from('PNGDATA').toString('base64');
-    return { ok: true, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ choices: [{ message: { images: [{ image_url: { url: `data:image/png;base64,${b64}` } }] } }] }) };
-  };
-  const invocation = (rawInput) => ({ rawInput, agent: { session: { header: { cwd: SANDBOX } } }, signal: { aborted: false }, commandId: 'test' });
-  try {
-    // Usage error path: a command handler must return a CommandResult, never throw.
-    const empty = await imageCommand.handler(invocation('   '));
-    console.log('empty input   ->', empty.kind, JSON.stringify(empty.text).slice(0, 60));
-    if (empty.kind !== 'error') problems.push('/image with no prompt must return an error result');
-
-    const badFlag = await imageCommand.handler(invocation('a lake --ref'));
-    console.log('dangling flag ->', badFlag.kind, JSON.stringify(badFlag.text).slice(0, 60));
-    if (badFlag.kind !== 'error') problems.push('/image must reject a flag with no value');
-
-    // Real path, with the enhancer off so the call count is unambiguous.
-    sent = [];
-    const ok = await imageCommand.handler(invocation('a serene lake --no-enhance'));
-    console.log('--no-enhance  ->', ok.kind, JSON.stringify(ok.text.split('\n')[0]));
-    console.log('fetch calls   :', sent.length, '(expect 1: generator only)');
-    if (ok.kind !== 'success') problems.push(`/image failed: ${ok.text}`);
-    if (sent.length !== 1) problems.push(`/image --no-enhance made ${sent.length} calls, expected 1`);
-    if (!ok.text.includes('.dsh-gearbox')) problems.push('/image success text does not carry the saved path');
-
-    // The prompt must survive flag stripping intact, and the provider flag must
-    // actually select the provider. Enhancement is on here, so call 0 is the
-    // enhancer and call 1 the generator.
-    sent = [];
-    const flagged = await imageCommand.handler(invocation('a lake at dawn --provider ujn --size 512x512'));
-    const asked = sent[1]?.body ?? {};
-    console.log('flags parsed  -> prompt in the generator body:', JSON.stringify(asked.messages?.[0]?.content));
-    console.log('generator     ->', JSON.stringify(asked.model), '| requested keys:', Object.keys(asked).join(','));
-    if (asked.model !== 'Qwen-Image-2.1') problems.push('/image --provider did not select the provider');
-    if (typeof asked.messages?.[0]?.content !== 'string') problems.push('/image lost the prompt text while stripping flags');
-    if (flagged.kind !== 'success') problems.push(`/image with flags failed: ${flagged.text}`);
-
-    // A reference selects the edit lane and the PE-I2I enhancer.
-    sent = [];
-    const edited = await imageCommand.handler(invocation('make it night --ref reference.png'));
-    console.log('--ref         ->', edited.kind, JSON.stringify(edited.text.split('\n')[0]));
-    console.log('models called :', sent.map((call) => call.body.model).join(' -> '), '(expect PE-I2I -> generator)');
-    if (sent[0]?.body?.model !== 'Qwen-Image-PE-I2I') problems.push('/image --ref did not route through the edit enhancer');
-    if (!edited.text.startsWith('已编辑图片')) problems.push('/image --ref did not report the edit lane');
-
-    // Upstream failure must come back as an error result, not an exception.
-    globalThis.fetch = async () => ({ ok: false, status: 502, text: async () => 'upstream down' });
-    const failed = await imageCommand.handler(invocation('a lake'));
-    console.log('upstream 502  ->', failed.kind, JSON.stringify(failed.text).slice(0, 70));
-    if (failed.kind !== 'error') problems.push('/image must convert an upstream failure into an error result');
-  } catch (error) {
-    problems.push(`/image command threw: ${error.message}`);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 }
 
 // ---- the client half must survive being loaded as a CLASSIC script ----
@@ -598,8 +456,8 @@ console.log('\n=== client half (classic-script shape) ===');
       // 每个插槽各查各的契约：设置分节要有模型行；输入条控件只要渲染出开关。
       const EXPECT = {
         'settings.section': { id: 'dsh-gearbox', needles: ['GLM-5.3-Flash', '无思考档位'] },
-        'conversation.input.left': { id: 'gearbox-image-mode', needles: ['图像模式'] },
-        'conversation.input.dock': { id: 'gearbox-image-mode', needles: ['图像模式'] },
+        'conversation.input.left': { id: 'gearbox-optimize', needles: ['优化提示词'] },
+        'conversation.input.dock': { id: 'gearbox-optimize', needles: ['优化提示词'] },
       };
       const expect = EXPECT[options.name];
       if (expect === undefined) problems.push(`section registered into an unexpected slot "${options.name}"`);
@@ -717,175 +575,6 @@ console.log('\n=== client half (classic-script shape) ===');
     }
     for (const key of Object.keys(globals)) delete globalThis[key];
   }
-}
-
-// ---- provider / model / protocol matrix ----
-// The lane's binding model is provider ⊥ model ⊥ protocol: two providers, and
-// three models on ONE provider speaking three different protocols. This drives
-// each protocol for real (against a stubbed network) so the request shapes are
-// checked, not assumed.
-console.log('\n=== multi-provider / per-model protocol binding ===');
-{
-  const { registerImageLane, normalizeImage, extractImage, extractText } = await import('file:///D:/dsh_pludge/dsh-gearbox/lib/image-lane.js');
-
-  // Back-compat: the original provider-flat shape must still resolve to roles.
-  const legacy = normalizeImage({
-    providers: { ujn: { baseURL: 'https://a.invalid/v1', apiKeyEnv: 'K', style: 'siliconflow', generator: 'G', promptEnhancer: 'PE', editEnhancer: 'EE', size: '1024x1024' } },
-    defaultProvider: 'ujn',
-  });
-  console.log('legacy provider-flat  -> generator:', legacy.roles.generator?.protocol, '/', legacy.roles.generator?.bodyStyle, '| enhancers:', legacy.roles.promptEnhancer?.protocol, legacy.roles.editEnhancer?.protocol);
-  if (legacy.roles.generator?.protocol !== 'images-generations') problems.push('legacy style "siliconflow" did not map to images-generations');
-  if (legacy.roles.generator?.bodyStyle !== 'siliconflow') problems.push('legacy style "siliconflow" did not carry its body style');
-  if (legacy.roles.promptEnhancer?.protocol !== 'chat') problems.push('legacy enhancer role is not chat');
-
-  const MATRIX = {
-    providers: {
-      alpha: { baseURL: 'https://alpha.invalid/v1', apiKeyEnv: 'ALPHA_KEY', headers: { 'x-tenant': 't1' } },
-      beta: { baseURL: 'https://beta.invalid/v1', apiKeyEnv: 'BETA_KEY' },
-    },
-    defaultProvider: 'alpha',
-    roles: {
-      // one provider, three models, three protocols
-      generator: {
-        provider: 'alpha', model: 'img-gen', protocol: 'images-generations', size: '1024x1024',
-        gears: { draft: { n: 1, quality: 'low' }, hd: { n: 2, quality: 'high' } }, gear: 'draft',
-      },
-      editor: { provider: 'alpha', model: 'img-edit', protocol: 'images-edits', maxInputImages: 2, imageField: 'image' },
-      // a second provider, same protocol as alpha's enhancer
-      promptEnhancer: { provider: 'beta', model: 'pe-t2i', protocol: 'chat', gears: { deep: { reasoning_effort: 'high' } }, gear: 'deep' },
-      editEnhancer: { provider: 'alpha', model: 'pe-i2i', protocol: 'chat' },
-    },
-    saveDir: '.dsh-gearbox',
-    autoEnhance: true,
-  };
-
-  const matrixCalls = [];
-  const matrixCtx = {
-    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    get: (name) => (name === 'credentials' ? { resolve: async (ref) => ({ ref, value: `key-for-${ref}` }) } : undefined),
-    tools: { register: () => () => {} },
-    webServer: { register: () => () => {} },
-    commands: { register: () => () => {} },
-    effect: (fn) => fn(),
-  };
-  const lane = registerImageLane(matrixCtx, { image: MATRIX });
-  // A real file on disk, because a workspace-path reference is read, not fetched.
-  const localRef = `${SANDBOX}/matrix-reference.png`;
-  {
-    const { mkdir, writeFile } = await import('node:fs/promises');
-    await mkdir(SANDBOX, { recursive: true });
-    await writeFile(localRef, Buffer.from('REFPNG'));
-  }
-  const resolved = lane.laneInfo();
-  console.log('providers             :', Object.keys(resolved.providers).join(', '));
-  for (const [id, role] of Object.entries(resolved.roles)) {
-    console.log(`role ${id.padEnd(15)} ${role.provider}/${role.model} on ${role.protocol}${role.gears.length > 0 ? ` gears=[${role.gears.join(',')}] default=${role.gear}` : ''}`);
-  }
-  const protocolSet = new Set(Object.values(resolved.roles).map((role) => role.protocol));
-  if (protocolSet.size !== 3) problems.push(`expected 3 distinct protocols across roles, saw ${[...protocolSet].join(', ')}`);
-
-  const originalFetch = globalThis.fetch;
-  let lastRequest;
-  // The reply is chosen by endpoint, because one pipeline run may hit both a
-  // chat endpoint (text back) and an images endpoint (image back).
-  const PNG_REPLY = { data: [{ b64_json: Buffer.from('PNGRESULT').toString('base64') }] };
-  const TEXT_REPLY = { choices: [{ message: { content: 'REWRITTEN PROMPT' } }] };
-  const stub = ({ chat = TEXT_REPLY, images = PNG_REPLY } = {}) => {
-    matrixCalls.length = 0;
-    globalThis.fetch = async (url, init) => {
-      lastRequest = { url: String(url), init };
-      matrixCalls.push(lastRequest);
-      const isChat = String(url).includes('/chat/completions');
-      const reply = isChat ? chat : images;
-      return {
-        ok: true,
-        status: 200,
-        // Both body shapes, because this stub also serves reference-image
-        // downloads (an http reference is fetched, not read from disk).
-        headers: new Headers({ 'content-type': String(url).includes('cdn.invalid') ? 'image/png' : 'application/json' }),
-        arrayBuffer: async () => Buffer.from('DOWNLOADED-PNG'),
-        json: async () => reply,
-        text: async () => JSON.stringify(reply),
-      };
-    };
-  };
-
-  try {
-    // (a) text→image, with a gear injected into the JSON body
-    stub();
-    const t2i = await lane.run({ prompt: 'a lake', enhance: false, cwd: SANDBOX });
-    const genBody = JSON.parse(lastRequest.init.body);
-    console.log('\n(a) images-generations ->', t2i.protocol, '| body keys:', Object.keys(genBody).join(','), '| gear fields:', genBody.n, genBody.quality);
-    if (lastRequest.url !== 'https://alpha.invalid/v1/images/generations') problems.push(`generations hit ${lastRequest.url}`);
-    if (genBody.n !== 1 || genBody.quality !== 'low') problems.push('the default gear did not reach the request body');
-    if (genBody.size !== '1024x1024') problems.push('the role size did not reach the request body');
-    if (lastRequest.init.headers['x-tenant'] !== 't1') problems.push('provider extra headers were dropped');
-
-    // (b) the same provider, a different model, on multipart images/edits
-    stub();
-    const edit = await lane.run({ prompt: 'make it night', references: ['matrix-reference.png', 'https://cdn.invalid/ref.png'], enhance: false, cwd: SANDBOX });
-    const form = lastRequest.init.body;
-    const fieldValues = typeof form?.getAll === 'function' ? form.getAll('image') : [];
-    console.log('(b) images-edits       ->', edit.protocol, '| url:', lastRequest.url.replace('https://alpha.invalid/v1', ''), '| multipart:', form instanceof FormData, '| files:', fieldValues.length, '| model:', form?.get?.('model'), '| prompt:', JSON.stringify(form?.get?.('prompt')));
-    if (lastRequest.url !== 'https://alpha.invalid/v1/images/edits') problems.push(`edits hit ${lastRequest.url}`);
-    if (!(form instanceof FormData)) problems.push('images-edits did not send a multipart body');
-    if (fieldValues.length !== 2) problems.push(`images-edits sent ${fieldValues.length} files, expected 2`);
-    if (form.get('model') !== 'img-edit') problems.push('images-edits did not send the role model');
-    if (lastRequest.init.headers['content-type'] !== undefined) problems.push('images-edits set content-type by hand, which breaks the multipart boundary');
-    if (lastRequest.init.headers.authorization !== 'Bearer key-for-ALPHA_KEY') problems.push('images-edits did not resolve the provider credential');
-
-    // maxInputImages caps the upload
-    stub();
-    await lane.run({ prompt: 'x', references: ['matrix-reference.png', 'matrix-reference.png', 'matrix-reference.png', 'matrix-reference.png'], enhance: false, cwd: SANDBOX });
-    const capped = lastRequest.init.body.getAll('image').length;
-    console.log('(b2) maxInputImages    ->', capped, '(role caps at 2)');
-    if (capped !== 2) problems.push(`maxInputImages not enforced: sent ${capped}`);
-
-    // (c) the enhancer runs on the OTHER provider, and its gear reaches the body.
-    // The enhancer is call 0; the generator that follows is the last call.
-    stub();
-    const enhanced = await lane.run({ prompt: 'a lake', enhance: true, cwd: SANDBOX });
-    const enhancerCall = matrixCalls[0];
-    console.log('(c) chat enhancer      ->', enhancerCall.url.replace('/v1/chat/completions', ''), '| calls:', matrixCalls.length, '| reasoning_effort:', JSON.stringify(JSON.parse(enhancerCall.init.body).reasoning_effort), '| rewritten:', JSON.stringify(enhanced.finalPrompt));
-    if (!enhancerCall.url.startsWith('https://beta.invalid/v1/')) problems.push('the enhancer did not use its own provider');
-    if (JSON.parse(enhancerCall.init.body).reasoning_effort !== 'high') problems.push('the enhancer gear did not reach the request body');
-    if (enhanced.finalPrompt !== 'REWRITTEN PROMPT') problems.push('the enhancer text was not adopted');
-    if (matrixCalls.length !== 2) problems.push(`enhanced run made ${matrixCalls.length} calls, expected 2 (enhancer + generator)`);
-
-    // (d) per-call gear override
-    stub();
-    await lane.run({ prompt: 'a lake', enhance: false, gear: 'hd', cwd: SANDBOX });
-    const hdBody = JSON.parse(lastRequest.init.body);
-    console.log('(d) gear override      ->', JSON.stringify({ n: hdBody.n, quality: hdBody.quality }));
-    if (hdBody.n !== 2 || hdBody.quality !== 'high') problems.push('the per-call gear override did not apply');
-
-    // (e) a reference with no editor role on a generations generator must refuse clearly
-    const noEditor = normalizeImage({
-      providers: { p: { baseURL: 'https://p.invalid/v1', apiKeyEnv: 'K' } },
-      roles: { generator: { model: 'g', protocol: 'images-generations' } },
-    });
-    if (noEditor.roles.editor !== undefined) problems.push('a generator-only config invented an editor role');
-  } catch (error) {
-    problems.push(`protocol matrix threw: ${error.message}`);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-
-  // Response-shape parsing, including the images API's data[0].b64_json
-  const shapes = {
-    'images api b64': { data: [{ b64_json: 'AAA' }] },
-    'images api url': { data: [{ url: 'https://cdn.invalid/a.png' }] },
-    'chat message.images': { choices: [{ message: { images: [{ image_url: { url: 'data:image/png;base64,BBB' } }] } }] },
-    'chat content parts': { choices: [{ message: { content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,CCC' } }] } }] },
-    'siliconflow images[]': { images: [{ url: 'data:image/png;base64,DDD' }] },
-    'responses output[]': { output: [{ type: 'image_generation_call', result: 'EEE' }] },
-  };
-  for (const [label, body] of Object.entries(shapes)) {
-    const hit = extractImage(body);
-    console.log(`shape ${label.padEnd(22)} -> ${hit?.b64 ? `b64 ${hit.b64}` : hit?.url ?? 'NOT PARSED'}`);
-    if (hit === undefined) problems.push(`response shape not parsed: ${label}`);
-  }
-  if (extractText({ choices: [{ message: { content: '  hi  ' } }] }) !== 'hi') problems.push('extractText did not trim');
 }
 
 // ---- the settings page must serve valid HTML with a compilable script ----

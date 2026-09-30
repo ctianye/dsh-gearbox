@@ -75,12 +75,16 @@ window.__ModuleLoader__.load({
 				saved: "已保存",
 				textProtocols: "文本协议（写进 llm-pi-ai 路由）",
 				imageProtocols: "图像协议（本插件 Image Lane）",
-				imageMode: "图像模式",
-				imageModeHint: "开启后输入区出现提示词优化按钮（生图请用 /image 或 agent 模式）",
+				enhancerTitle: "提示词优化模型",
+				enhancerHint: "点「优化提示词」时用它改写输入框",
+				enhancerAuto: "自动",
+				adopt: "采纳",
+				dismiss: "放弃",
 				optimize: "优化提示词",
 				optimizing: "优化中…",
 				optimizeHint: "调用设置里绑定的提示词优化模型改写输入框内容",
-				draftUnavailable: "读不到输入框内容，无法写回（外壳结构变了？）",
+				draftUnavailable: "读不到输入框内容：请先输入文字再点优化",
+				adoptFailed: "没能写回输入框（外壳拒绝了这次修改），请手动复制上面的提示词",
 				openInTab: "独立页",
 				lastWrite: "上次写入",
 				noChange: "无变更",
@@ -118,12 +122,16 @@ window.__ModuleLoader__.load({
 				saved: "Saved",
 				textProtocols: "Text protocols (llm-pi-ai route)",
 				imageProtocols: "Image protocols (this plugin's lane)",
-				imageMode: "Image",
-				imageModeHint: "Shows the prompt-optimize button (generate images with /image or agent mode)",
+				enhancerTitle: "Prompt enhancer model",
+				enhancerHint: "Rewrites the composer text when you hit Optimize",
+				enhancerAuto: "Auto",
+				adopt: "Adopt",
+				dismiss: "Dismiss",
 				optimize: "Optimize",
 				optimizing: "Optimizing…",
 				optimizeHint: "Rewrite the composer text with the configured enhancer model",
-				draftUnavailable: "Could not read the composer text back",
+				draftUnavailable: "Nothing to optimize — type something in the composer first",
+				adoptFailed: "Could not write into the composer — copy the prompt above instead",
 				openInTab: "standalone",
 				lastWrite: "Last write",
 				noChange: "no change",
@@ -243,8 +251,8 @@ window.__ModuleLoader__.load({
 				borderRadius: "10px", padding: "2px 14px", marginBottom: "10px", minWidth: 0
 			},
 			row: {
-				display: "grid", gridTemplateColumns: "minmax(96px, 180px) minmax(0, 1fr)", gap: "12px",
-				padding: "10px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "start",
+				display: "grid", gridTemplateColumns: "minmax(110px, 150px) minmax(0, 1fr)", gap: "10px",
+				padding: "9px 0", borderBottom: "1px solid var(--dsw-alias-hairline)", alignItems: "start",
 				minWidth: 0
 			},
 			rowLast: { borderBottom: "none" },
@@ -293,7 +301,7 @@ window.__ModuleLoader__.load({
 				borderBottom: "1px solid var(--dsw-alias-hairline)", marginBottom: "2px"
 			},
 			groupHeadMeta: { fontSize: "11.5px", fontWeight: 400, color: "var(--dsw-alias-label-tertiary)" },
-			composerRow: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
+			composerRow: { position: "relative", display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
 			chip: {
 				font: "inherit", fontSize: "11.5px", lineHeight: 1.2, padding: "4px 9px",
 				borderRadius: "999px", border: "1px solid var(--dsw-alias-border-l2)",
@@ -306,21 +314,38 @@ window.__ModuleLoader__.load({
 				color: "var(--dsw-alias-label-primary)"
 			},
 			chipDisabled: { opacity: 0.55, cursor: "default" },
+			spinner: {
+				display: "inline-block", width: "10px", height: "10px", borderRadius: "50%",
+				border: "2px solid var(--dsw-alias-border-l2)",
+				borderTopColor: "var(--dsw-alias-brand-primary)",
+				animation: "dsh-gearbox-spin .7s linear infinite", marginRight: "5px"
+			},
+			panel: {
+				position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 40,
+				width: "min(78vw, 520px)", maxHeight: "240px", overflowY: "auto",
+				background: "var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2))",
+				border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px",
+				boxShadow: "0 8px 24px rgba(0,0,0,.18)", padding: "10px 12px",
+				display: "flex", flexDirection: "column", gap: "8px"
+			},
+			panelText: { fontSize: "12.5px", color: "var(--dsw-alias-label-primary)", whiteSpace: "pre-wrap", lineHeight: 1.5 },
+			panelActions: { display: "flex", gap: "8px" },
 			composerNote: { fontSize: "11.5px", color: "var(--dsw-alias-state-warn-label, var(--dsw-alias-label-tertiary))" },
-			ddWrap: { position: "relative", display: "inline-flex", minWidth: 0, maxWidth: "100%" },
+			ddWrap: { display: "flex", flexDirection: "column", alignItems: "stretch", gap: "4px", minWidth: 0 },
 			ddButton: {
 				font: "inherit", fontSize: "12.5px", color: "var(--dsw-alias-label-primary)",
 				background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l2)",
-				borderRadius: "8px", padding: "6px 10px", cursor: "pointer",
-				display: "flex", alignItems: "center", gap: "8px", minWidth: 0, maxWidth: "100%",
+				borderRadius: "8px", padding: "6px 10px", cursor: "pointer", width: "100%",
+				display: "flex", alignItems: "center", gap: "8px", minWidth: 0,
 				overflow: "hidden"
 			},
 			ddButtonOpen: { borderColor: "var(--dsw-alias-brand-primary)" },
-			ddLabel: { flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+			ddLabel: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 			ddCaret: { marginLeft: "auto", color: "var(--dsw-alias-label-tertiary)", fontSize: "10px" },
 			ddMenu: {
-				position: "absolute", top: "calc(100% + 4px)", right: 0, left: "auto", zIndex: 40,
-				minWidth: "100%", width: "max-content", maxWidth: "min(64vw, 340px)", maxHeight: "300px",
+				// 内联展开，不用绝对定位浮层：浮层会被外壳的透明遮罩挡住，点不中（已实测）。
+				marginTop: "4px", position: "static", zIndex: "auto",
+				minWidth: "100%", maxWidth: "100%", maxHeight: "280px",
 				overflowY: "auto", overflowX: "hidden",
 				background: "var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2))",
 				border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px",
@@ -333,7 +358,8 @@ window.__ModuleLoader__.load({
 			ddItem: {
 				display: "block", width: "100%", textAlign: "left", font: "inherit", fontSize: "12px",
 				color: "var(--dsw-alias-label-primary)", background: "transparent", border: "none",
-				borderRadius: "6px", padding: "6px 8px", cursor: "pointer", whiteSpace: "normal", lineHeight: 1.4
+				borderRadius: "6px", padding: "6px 8px", cursor: "pointer", whiteSpace: "nowrap",
+				overflow: "hidden", textOverflow: "ellipsis"
 			},
 			ddItemActive: { background: "var(--dsw-alias-interactive-bg-active, var(--dsw-alias-accent-soft))" },
 			primaryButton: {
@@ -390,67 +416,91 @@ window.__ModuleLoader__.load({
 	 */
 	function makeComposerActions(React, t) {
 		return function ComposerActions() {
-			const onState = React.useState(false);
-			const on = onState[0];
-			const setOn = onState[1];
 			const busyState = React.useState(false);
 			const busy = busyState[0];
 			const setBusy = busyState[1];
+			// 优化结果面板：非 null 时展示优化后的提示词，等用户决定采纳或放弃。
+			const panelState = React.useState(null);
+			const panel = panelState[0];
+			const setPanel = panelState[1];
 			const noteState = React.useState(null);
 			const note = noteState[0];
 			const setNote = noteState[1];
 
+			// 转圈动画：外壳没有现成的，注入一次 keyframes。
 			React.useEffect(() => {
-				let cancelled = false;
-				fetch(API + '/own-config')
-					.then((response) => response.json())
-					.then((payload) => {
-						if (cancelled || !payload.ok) return;
-						setOn((((payload.config || {}).ui || {}).imageMode) === true);
-					})
-					.catch(() => { /* 读不到就维持默认关，不影响输入 */ });
-				return () => { cancelled = true; };
+				try {
+					if (document.getElementById("dsh-gearbox-style") === null) {
+						const style = document.createElement("style");
+						style.id = "dsh-gearbox-style";
+						style.textContent = "@keyframes dsh-gearbox-spin{to{transform:rotate(360deg)}}";
+						document.head.appendChild(style);
+					}
+				} catch { /* 注入失败只是没有动画，不影响功能 */ }
 			}, []);
 
-			/** The composer's textarea — see the note above about why this is DOM-level. */
+
+			/**
+			 * 输入框元素。DSH 的输入框**不一定是 <textarea>**（支持 @ 提及与 / 命令的富文本输入
+			 * 通常是 contenteditable），所以两种都要找 —— 只认 textarea 的话读出来是空串，
+			 * 表现就是"点了优化没反应"（已实测踩过）。
+			 */
 			const draftElement = () => {
-				const seat = document.querySelector('[data-composer-seat]');
-				return (seat === null ? null : seat.querySelector('textarea')) || document.querySelector('textarea');
+				// 用户刚在输入框里打过字，焦点元素就是最可靠的那个；
+				// 只按结构查容易命中同页面的其它输入框。
+				const focused = document.activeElement;
+				if (focused !== null && focused !== undefined) {
+					const tag = focused.tagName;
+					if (tag === "TEXTAREA" || tag === "INPUT" || focused.getAttribute?.("contenteditable") !== null) return focused;
+				}
+				const seat = document.querySelector("[data-composer-seat]");
+				const scope = seat === null ? document : seat;
+				return scope.querySelector("textarea")
+					|| scope.querySelector('[contenteditable="true"]')
+					|| scope.querySelector('[contenteditable=""]')
+					|| document.querySelector("textarea")
+					|| document.querySelector('[contenteditable="true"]');
 			};
 			const readDraft = () => {
 				const element = draftElement();
-				return element === null ? '' : element.value;
+				if (element === null) return "";
+				if (typeof element.value === "string") return element.value;
+				return element.innerText ?? element.textContent ?? "";
 			};
 			const writeDraft = (text) => {
 				const element = draftElement();
 				if (element === null) return false;
-				const descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-				descriptor.set.call(element, text);
-				element.dispatchEvent(new Event('input', { bubbles: true }));
 				element.focus();
+				if (typeof element.value === "string") {
+					// 受控 textarea：走原型上的原生 setter，再派发 input，React 才认。
+					const descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+					descriptor.set.call(element, text);
+					element.dispatchEvent(new Event("input", { bubbles: true }));
+					return true;
+				}
+				// contenteditable：全选后插入，这样撤销栈与受控状态都对得上。
+				try {
+					const selection = window.getSelection();
+					const range = document.createRange();
+					range.selectNodeContents(element);
+					selection.removeAllRanges();
+					selection.addRange(range);
+					if (typeof document.execCommand === "function" && document.execCommand("insertText", false, text)) return true;
+				} catch { /* 落到下面的兜底 */ }
+				element.textContent = text;
+				element.dispatchEvent(new Event("input", { bubbles: true }));
 				return true;
 			};
 
-			const toggle = async () => {
-				const next = !on;
-				setOn(next);
-				setNote(null);
-				try {
-					const payload = await fetch(API + '/own-config', {
-						method: 'POST',
-						headers: { 'content-type': 'application/json' },
-						body: JSON.stringify({ ui: { imageMode: next } })
-					}).then((response) => response.json());
-					if (!payload.ok) throw new Error(payload.error || 'save failed');
-				} catch (error) {
-					setOn(!next);
-					setNote(String((error && error.message) || error));
-				}
-			};
 
 			const optimize = async () => {
+				if (busy) return;
 				const prompt = readDraft().trim();
-				if (prompt === '' || busy) return;
+				if (prompt === "") {
+					// 曾经这里直接 return，结果"点了没反应"且毫无线索 —— 必须说出来。
+					setNote(t("draftUnavailable"));
+					return;
+				}
 				setBusy(true);
 				setNote(null);
 				try {
@@ -460,7 +510,7 @@ window.__ModuleLoader__.load({
 						body: JSON.stringify({ prompt: prompt })
 					}).then((response) => response.json());
 					if (!payload.ok) throw new Error(payload.error || 'enhance failed');
-					if (!writeDraft(payload.prompt)) throw new Error(t('draftUnavailable'));
+					setPanel(payload.prompt);
 				} catch (error) {
 					setNote(String((error && error.message) || error));
 				} finally {
@@ -476,13 +526,24 @@ window.__ModuleLoader__.load({
 				onClick: handler
 			}, label);
 
+			// 优化中：按钮里放一个 CSS 转圈（keyframes 已注入 document.head）。
+			const spinner = React.createElement('span', { style: STYLE.spinner });
+			const optimizeChip = busy
+				? React.createElement('button', { type: 'button', disabled: true, style: Object.assign({}, STYLE.chip, STYLE.chipDisabled) }, spinner, t('optimizing'))
+				: chip(t('optimize'), false, optimize, false, t('optimizeHint'));
+			const panelBox = panel === null ? null : React.createElement('div', { style: STYLE.panel },
+				React.createElement('div', { style: STYLE.panelText }, panel),
+				React.createElement('div', { style: STYLE.panelActions },
+					React.createElement('button', { type: 'button', style: STYLE.primaryButton, onClick: () => { if (writeDraft(panel)) setPanel(null); } }, t('adopt')),
+					React.createElement('button', { type: 'button', style: STYLE.smallButton, onClick: () => setPanel(null) }, t('dismiss'))));
 			return React.createElement('div', { style: STYLE.composerRow },
-				chip(t('imageMode'), on, toggle, false, t('imageModeHint')),
-				on ? chip(busy ? t('optimizing') : t('optimize'), false, optimize, busy, t('optimizeHint')) : null,
-				note === null ? null : React.createElement('span', { style: STYLE.composerNote }, note));
+				optimizeChip,
+				note === null ? null : React.createElement('span', { style: STYLE.composerNote }, note),
+				panelBox);
 		};
 	}
-		function makeSection(React, t) {
+
+		function makeSection(React, t, language) {
 			const createElement = React.createElement.bind(React);
 			// 变长 children：写成 (tag, props, ...children)，漏了 children 会让整棵渲染树静默变空。
 			const h = (tag, props, ...children) => createElement(tag, props, ...children);
@@ -521,11 +582,19 @@ window.__ModuleLoader__.load({
 				 */
 				const dropdown = (k, currentValue, currentLabel, options, onPick, maxWidth) => {
 					const open = openKey === k;
+					let chosen = false;
+					const choose = (value) => {
+						if (chosen) return;
+						chosen = true;
+						setOpenKey(null);
+						onPick(value);
+					};
 					return createElement("div", { style: STYLE.ddWrap },
 						createElement("button", {
 							type: "button",
 							style: Object.assign({}, STYLE.ddButton, maxWidth ? { maxWidth: maxWidth } : null, open ? STYLE.ddButtonOpen : null),
-							onClick: () => setOpenKey(open ? null : k)
+							onPointerDown: (event) => { event.preventDefault(); setOpenKey(open ? null : k); },
+							onMouseDown: (event) => { event.preventDefault(); setOpenKey(open ? null : k); }
 						},
 							createElement("span", { style: STYLE.ddLabel }, currentLabel),
 							createElement("span", { style: STYLE.ddCaret }, "▾")),
@@ -536,7 +605,12 @@ window.__ModuleLoader__.load({
 									key: "o" + i,
 									type: "button",
 									style: Object.assign({}, STYLE.ddItem, option.value === currentValue ? STYLE.ddItemActive : null),
-									onClick: () => { setOpenKey(null); onPick(option.value); }
+									// mousedown 而不是 click：外壳的焦点管理会在 mousedown 时重聚焦，click 有时不送达。
+									// 三种事件都挂：外壳的焦点管理与事件代理在不同位置行为不同，只挂一种
+									// 就会出现"点了没反应"。choose 里的标志保证只执行一次。
+									onPointerDown: (event) => { event.preventDefault(); choose(option.value); },
+									onMouseDown: (event) => { event.preventDefault(); choose(option.value); },
+									onClick: () => choose(option.value)
 								}, option.label))) : null);
 				};
 
@@ -635,25 +709,7 @@ window.__ModuleLoader__.load({
 					}
 				};
 
-				const saveEnhancers = async () => {
-					const image = JSON.parse(JSON.stringify((data.config && data.config.image) || {}));
-					const grids = document.querySelectorAll("[data-gearbox-role]");
-					for (const grid of grids) {
-						const id = grid.getAttribute("data-gearbox-role");
-						const provider = grid.querySelector('[data-field="provider"]').value;
-						const model = grid.querySelector('[data-field="model"]').value.trim();
-						if (!model) continue;
-						image.roles = image.roles || {};
-						image.roles[id] = Object.assign({}, image.roles[id] || {}, { provider: provider, model: model });
-					}
-					try {
-						await saveOwn({ image: image });
-						setFlash(t("saved"));
-						await refresh();
-					} catch (error) {
-						setFlash(String((error && error.message) || error));
-					}
-				};
+
 
 				// ---- render ----
 				if (loadError) {
@@ -836,24 +892,44 @@ window.__ModuleLoader__.load({
 
 				// 图像通道的两个增强角色：只有"哪个供应商的哪个模型"是这里要配的，
 				// 生成/编辑模型与协议统一在上面的模型列表里改。
-				const roleGrids = ["promptEnhancer", "editEnhancer"].map((id) => {
-					const role = ((config.image || {}).roles || {})[id] || {};
-					const resolved = (((info.lane || {}).roles) || {})[id] || {};
-					return createElement("div", { key: id, "data-gearbox-role": id, style: STYLE.roleRow },
-						createElement("span", { style: STYLE.roleLabel }, ROLE_LABEL[id] || id),
-						createElement("span", { style: STYLE.fields },
-							createElement("label", { style: STYLE.field }, t("vendor"),
-								createElement("select", {
-									style: STYLE.select, "data-field": "provider",
-									defaultValue: role.provider || resolved.provider || (providers[0] ?? "")
-								}, providers.map((name) => createElement("option", { key: name, value: name }, name)))),
-							createElement("label", { style: STYLE.field }, t("modelField"),
-								createElement("input", {
-									type: "text", "data-field": "model", style: STYLE.modeInput,
-									defaultValue: role.model || resolved.model || "", placeholder: "model id"
-								}))));
-				});
 
+
+				// 提示词优化模型：从所有已配置的供应商/模型里选一个（分组按供应商）。
+				const enhancerConfig = config.enhancer || {};
+				// 两者都为空时必须是空串；用 "|" 拼会让下拉按钮显示空白（split 后取到空字符串）。
+				const enhancerValue = enhancerConfig.route && enhancerConfig.model
+					? enhancerConfig.route + "|" + enhancerConfig.model
+					: "";
+				// 「自动」时也要说清会用哪个模型，而不是只写"自动"。
+				const resolvedEnhancer = info.enhancerResolved || null;
+				const autoLabel = resolvedEnhancer === null
+					? t("enhancerAuto")
+					: t("enhancerAuto") + " · " + resolvedEnhancer.route + "/" + resolvedEnhancer.model;
+				const enhancerOptions = [{ value: "", label: autoLabel }];
+				let lastEnhancerRoute = null;
+				for (const row of models) {
+					if (row.route !== lastEnhancerRoute) {
+						enhancerOptions.push({ group: row.route });
+						lastEnhancerRoute = row.route;
+					}
+					enhancerOptions.push({ value: row.route + "|" + row.model, label: row.model });
+				}
+				const saveEnhancer = async (value) => {
+					const parts = value.split("|");
+					try {
+						await saveOwn({ enhancer: value === "" ? {} : { route: parts[0], model: parts[1] } });
+						setFlash(t("saved") + " · " + t("enhancerTitle"));
+						await refresh();
+					} catch (error) { setFlash(String((error && error.message) || error)); }
+				};
+				const enhancerSelect = dropdown(
+					"enhancer",
+					enhancerValue,
+					enhancerValue === "" ? autoLabel : enhancerValue.split("|")[1],
+					enhancerOptions,
+					(value) => saveEnhancer(value),
+					"100%"
+				);
 				return h("div", { style: STYLE.root },
 					flash ? h("div", { style: STYLE.flash }, flash) : null,
 					h("div", { style: STYLE.head },
@@ -864,11 +940,15 @@ window.__ModuleLoader__.load({
 					h("div", { style: STYLE.card },
 						h("div", { style: { padding: "8px 0 4px" } }, h("span", { style: STYLE.controlLabel }, t("liveHint"))),
 						rows),
-					h("h3", { style: STYLE.h3 }, t("enhancer")),
-					h("div", { style: STYLE.card },
-						h("div", { style: { padding: "6px 0 2px" } }, roleGrids),
-						h("div", { style: Object.assign({}, STYLE.rowActions, { padding: "10px 0 6px" }) },
-							h("button", { type: "button", style: STYLE.primaryButton, onClick: saveEnhancers }, t("saveEnhancers")))));
+				h("h3", { style: STYLE.h3 }, t("enhancerTitle")),
+				h("div", { style: STYLE.card },
+					h("div", { style: STYLE.row },
+						h("div", { style: STYLE.rowLabel },
+							h("span", { style: STYLE.mono }, t("enhancerTitle")),
+							h("span", { style: STYLE.muted }, t("enhancerHint"))),
+						h("div", { style: STYLE.rowControl }, enhancerSelect))),
+				h("div", { style: STYLE.note },
+					"diagnostic · lang=" + language + " · keys=" + Object.keys(DICTIONARIES[language] || {}).length + " · build=probe1"));
 
 							}
 			return GearboxSection;
@@ -885,20 +965,31 @@ window.__ModuleLoader__.load({
 		 * the document and the locale service are only fallbacks.
 		 */
 		function activeLanguage(ctx) {
+			// 信号可靠性排序是实测出来的：外壳把 documentElement.lang 固定成 en，
+			// Electron 的 navigator.language 在本机也不是 zh —— 两者都会把界面判成英文。
+			// 外壳自己渲染的是中文界面，所以先问 locale 服务；都问不出来时默认中文，
+			// 而不是英文（本插件的使用者环境就是中文，判错成英文的代价更大）。
 			const looksChinese = (value) => typeof value === "string" && /^zh/i.test(value);
+			const fromService = () => {
+				try {
+					const value = ctx.locale?.current?.() ?? ctx.locale?.language ?? ctx.locale?.get?.();
+					if (typeof value === "string") return value;
+					if (value !== null && value !== undefined && typeof value === "object") {
+						return value.language ?? value.code ?? value.locale ?? null;
+					}
+				} catch { /* 服务不可用就往下走 */ }
+				return null;
+			};
+			if (looksChinese(fromService())) return "zh";
 			try {
 				if (looksChinese(navigator?.language)) return "zh";
 				if (Array.isArray(navigator?.languages) && navigator.languages.some(looksChinese)) return "zh";
 				if (looksChinese(document.documentElement?.lang)) return "zh";
-				const fromService = ctx.locale?.current?.() ?? ctx.locale?.language?.();
-				if (looksChinese(fromService)) return "zh";
-			} catch {
-				/* any of these can be unavailable; fall through to English */
-			}
-			return "en";
+			} catch { /* 任何一项不可用都不影响 */ }
+			return "zh";
 		}
 
-		function apply(ctx) {
+		function apply(ctx, config) {
 			// Locale first, and separately contained: a missing service must not cost
 			// the settings section.
 			let language = "en";
@@ -906,7 +997,8 @@ window.__ModuleLoader__.load({
 				for (const code of Object.keys(DICTIONARIES)) {
 					ctx.locale?.register?.(NS, code, DICTIONARIES[code]);
 				}
-				language = activeLanguage(ctx);
+				// 显式配置优先；auto（或未配置）时才自动判断 —— 判断不出来的兜底是中文。
+				language = (config?.language === "zh" || config?.language === "en") ? config.language : activeLanguage(ctx);
 			} catch (error) {
 				ctx.logger?.warn?.("dsh-gearbox: locale registration skipped", error);
 			}
@@ -915,7 +1007,7 @@ window.__ModuleLoader__.load({
 			try {
 				const React = require("react");
 				if (React === undefined || React === null) throw new Error("react is not in the client module table");
-				const Section = makeSection(React, t);
+				const Section = makeSection(React, t, language);
 				ctx.effect(
 					() => ctx.slots.inject(SETTINGS_SLOT, () => ctx.slots.register({
 						name: SETTINGS_SLOT,
@@ -942,9 +1034,9 @@ window.__ModuleLoader__.load({
 						try {
 							return ctx.slots.inject(slot, () => ctx.slots.register({
 								name: slot,
-								id: "gearbox-image-mode",
+								id: "gearbox-optimize",
 								order: 30,
-								label: () => t("imageMode")
+								label: () => t("optimize")
 							}, ComposerActions));
 						} catch (error) {
 							ctx.logger?.warn?.(`dsh-gearbox: ${slot} 不可注册，换下一个`, error);

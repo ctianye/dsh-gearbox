@@ -83,6 +83,10 @@ const imageRole = z.object({
 });
 
 export const Config = z.object({
+  language: z.union(['auto', 'zh', 'en'])
+    .description('界面语言。auto=按外壳/浏览器判断（判断不出来时用中文）；zh/en=强制')
+    .default('zh'),
+
   // -- Effort Studio (text models) --
   rules: z.array(rule).description('档位规则：applyMode=auto 时保存即直写 llm-pi-ai。不改写则模型没有档位行，前端也不会出现档位选择器'),
   customEfforts: z.array(z.intersect([rule, customEfforts])).description('完全自定义档位的规则（与 preset 二选一）'),
@@ -90,42 +94,12 @@ export const Config = z.object({
   applyMode: z.union(['auto', 'manual'])
     .description('auto=保存即直写 llm-pi-ai 配置（写入前本地校验，不合法规则单独拒绝而不拖垮整次保存）；manual=仅在 /gears/api/apply 或导出 YAML 后生效'),
 
-  // -- 输入框交互 --
-  ui: z.object({
-    imageMode: z.boolean()
-      .description('输入框「图像模式」开关的默认状态。开启后，输入区出现提示词优化按钮，发送按生图处理')
-      .default(false),
-    enhanceLane: z.union(['t2i', 'edit'])
-      .description('提示词优化走的通道：t2i 用 promptEnhancer（文生图扩写），edit 用 editEnhancer（编辑指令改写）。两者在「图像通道」里各自绑定模型')
-      .default('t2i'),
-  }).description('输入框交互。提示词优化所用的**模型**在 图像通道 → promptEnhancer 里配置，此处只选走哪条通道，避免同一模型配两遍'),
-
-  // -- Image Lane --
-  image: z.object({
-    providers: z.dict(z.object({
-      baseURL: z.string().description('OpenAI 兼容根地址，如 https://llm.example.com/v1').required(),
-      apiKeyEnv: z.string().description('凭据引用（DSH 凭据存储的键或环境变量名）').required(),
-      headers: z.dict(z.string()).description('附加请求头（可选）'),
-      displayName: z.string().description('显示名（可选）'),
-      // Legacy role fields. Kept so an existing config keeps working; when
-      // `roles` is present these are ignored.
-      style: z.union(['chat', 'images', 'siliconflow']).description('旧字段：整条 provider 一个 style。新配置请改用 image.roles 里的 protocol'),
-      generator: z.string().description('旧字段：生成模型 id'),
-      promptEnhancer: z.string().description('旧字段：文生图提示词增强模型 id'),
-      editEnhancer: z.string().description('旧字段：编辑指令改写模型 id'),
-      size: z.string().description('旧字段：默认尺寸'),
-    })).description('供应商：只放连接与凭据；协议绑定在 image.roles 的每个模型上'),
-
-    defaultProvider: z.string().description('默认供应商名（roles 里留空 provider 时使用）'),
-
-    roles: z.dict(imageRole).description(
-      `角色 → 模型绑定，可自由组合：${IMAGE_ROLES.map((role) => `${role.id}=${role.label}`).join('；')}。`
-      + '同一供应商下不同模型可选不同协议；不同供应商可自由选同一协议',
-    ),
-
-    saveDir: z.string().description('会话工作区内的保存目录').default('.dsh-gearbox'),
-    autoEnhance: z.boolean().description('生成前自动调用对应增强模型（PE-T2I / PE-I2I）').default(true),
-  }).description('Image Lane 图像生成通道'),
+  // -- 提示词优化 --
+  enhancer: z.object({
+    route: z.string().description('用哪个供应商的模型做提示词优化（留空则用第一个已配置供应商）'),
+    model: z.string().description('优化用的大模型 id（留空则用该供应商的第一个模型）'),
+    system: z.string().description('优化指令（可留空，用内置默认）'),
+  }).description('提示词优化：在输入框点「优化提示词」时，用这里指定的大模型把描述改写成更完整的提示词'),
 });
 
 export default Config;

@@ -30,8 +30,8 @@ import {
   reasoningEffortsProblems,
   THINKING_LEVELS,
 } from './presets.js';
-import { registerImageLane } from './image-lane.js';
 import { settingsPage } from './settings-page.js';
+import { buildEnhancerSystem } from './prompt-skill.js';
 import { isThinkingCapable, vendorTree } from './vendor-catalog.js';
 
 export const name = 'dsh-gearbox';
@@ -55,10 +55,12 @@ export { Config };
 /** The llm-pi-ai package name this plugin configures. */
 const PI_AI = '@deepseek-ai/dsh-llm-pi-ai';
 
+
 /** The loader entry id the shipped profiles and docs use for that package. */
 const PI_AI_ID = 'llm-pi-ai';
 
 /** This plugin's package name, for addressing its own loader entry. */
+
 const NAME = 'dsh-gearbox';
 
 /** Find the live llm-pi-ai loader entry, or undefined when not mounted. */
@@ -357,6 +359,51 @@ async function applyRules(ctx, rules) {
   return { applied: resolved.applied, rejected: resolved.rejected, changed: true };
 }
 
+/**
+ * 提示词优化：用 enhancer 指定的供应商/模型，把用户的描述改写成更完整的提示词。
+ * 只做一次非流式 chat.completions 调用；thinking 模型的推理走 reasoning_content，
+ * content 天然干净 —— 这也是提示词优化换普通 instruct 模型后输出变干净的原因。
+ * @returns {{ prompt: string, model: string, provider: string }}
+ */
+async function optimizePrompt(ctx, config, prompt) {
+  const enhancer = config?.enhancer ?? {};
+  const providersMap = providers(ctx);
+  const routeName = enhancer.route || Object.keys(providersMap)[0];
+  const provider = routeName === undefined ? undefined : providersMap[routeName];
+  if (provider === undefined) throw new Error("dsh-gearbox: 没有可用的供应商，无法做提示词优化");
+  const model = enhancer.model || (provider.models ?? [])[0]?.id;
+  if (model === undefined) throw new Error(`dsh-gearbox: 供应商「${routeName}」上没有配置模型`);
+  const credentials = ctx.get("credentials");
+  let apiKey = provider.apiKeyEnv ?? "";
+  try {
+    const resolved = await credentials?.resolve?.(provider.apiKeyEnv);
+    if (resolved && resolved.value) apiKey = resolved.value;
+  } catch { /* 用引用名兜底 */ }
+  // 指令：用户在设置里写过就用他的，否则用内化的「提示词优化专家」技能
+  // （方案来自 https://github.com/LinqiuZz/Claude-prompt-skill- ，见 lib/prompt-skill.js）。
+  const system = buildEnhancerSystem(enhancer.system);
+  const response = await fetch(String(provider.baseURL).replace(/\/+$/, "") + "/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + apiKey },
+    body: JSON.stringify({ model, stream: false, messages: [
+      { role: "system", content: system },
+      { role: "user", content: prompt },
+    ] }),
+  });
+  if (!response.ok) throw new Error(`优化失败：${routeName}/${model} HTTP ${response.status}`);
+  const body = await response.json();
+  const raw = body?.choices?.[0]?.message?.content;
+  const text = typeof raw === "string" ? raw.trim() : Array.isArray(raw)
+    ? raw.map((part) => (typeof part?.text === "string" ? part.text : "")).join("").trim() : "";
+  if (text === "") throw new Error("dsh-gearbox: 优化模型没有返回内容");
+  const jsonMatch = /"prompt"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  let prompt2 = text;
+  if (jsonMatch !== null) {
+    try { prompt2 = JSON.parse("\"" + jsonMatch[1] + "\""); } catch { prompt2 = jsonMatch[1]; }
+  }
+  return { prompt: String(prompt2).trim(), model, provider: routeName };
+}
+
 /** YAML fragment a user can paste instead of letting the plugin write. */
 function exportYaml(rules) {
   const blocks = [];
@@ -584,22 +631,7 @@ export function apply(ctx, config) {
     ctx.logger.info('dsh-gearbox: %d rule(s) held back (applyMode=manual); POST /gears/api/apply to write them', rules.length);
   }
 
-  // ---- Image Lane ----
-  // The lane reports its own resolved configuration back, so /gears/api/info can
-  // describe what is actually wired (providers, styles, enhancer roles) without
-  // re-deriving it from the raw config — and without echoing any credential.
-  let laneInfo = () => ({ providers: {} });
-  let laneCommands = [];
-  // 路由处理器需要调用 lane.enhance，而 lane 在下面 effect 的回调里创建，故留一个函数级引用。
-  let laneApi = null;
-  const commandSurface = ctx.get('commands') === undefined ? 'absent' : 'mounted';
-  ctx.effect(() => {
-    const lane = registerImageLane(ctx, { image });
-    laneInfo = lane.laneInfo;
-    laneCommands = lane.commands;
-    laneApi = lane;
-    return lane.dispose;
-  }, 'dsh-gearbox: image lane');
+  const commandSurface = ctx.get("commands") === undefined ? "absent" : "mounted";
 
   // ---- panel API ----
   ctx.effect(() => ctx.webServer.register({
@@ -629,14 +661,17 @@ export function apply(ctx, config) {
             ),
             // Image Lane: providers are connection profiles; each role binds its
             // own model + protocol, which is what `lane.roles` reports.
-            imageProviders: Object.keys(laneInfo().providers ?? {}),
-            imageProtocols: laneInfo().protocols ?? [],
-            imageRoles: Object.keys(laneInfo().roles ?? {}),
-            defaultImageProvider: laneInfo().defaultProvider ?? null,
-            autoEnhance: laneInfo().autoEnhance ?? true,
-            lane: laneInfo(),
+            enhancer: config?.enhancer ?? null,
+            // 「自动」时前端也要能显示实际会用哪个模型 —— 这里算好给它，但不调用。
+            enhancerResolved: (() => {
+              const map = providers(ctx);
+              const routeName = config?.enhancer?.route || Object.keys(map)[0];
+              const provider = routeName === undefined ? undefined : map[routeName];
+              const model = config?.enhancer?.model || (provider?.models ?? [])[0]?.id;
+              return routeName === undefined || model === undefined ? null : { route: routeName, model };
+            })(),
             commandSurface,
-            commands: laneCommands,
+            commands: [],
             settingsPage: '/gears/ui',
           });
           return;
@@ -691,19 +726,12 @@ export function apply(ctx, config) {
           // The prefix handler has already consumed the request body into `input`.
           const plan = input?.plan ?? {};
           // 文本协议写进 llm-pi-ai 的 `providers[].api`；图像协议是**本插件**的能力
-          // （llm-pi-ai 不认它们），所以写进 image.roles，落到 Image Lane 的角色上。
-          const IMAGE_ROLE_FOR = {
-            'images-generations': 'generator',
-            'images-edits': 'editor',
-            'images-variations': 'variator',
-          };
+          // 协议切换只针对文本协议（图像协议已随生图功能移除）。
           const textPlan = {};
-          const imagePlan = {};
           for (const [model, api] of Object.entries(plan)) {
             if (PROTOCOLS.includes(api)) textPlan[model] = api;
-            else if (IMAGE_ROLE_FOR[api] !== undefined) imagePlan[model] = api;
             else {
-              send(400, { ok: false, error: `未知协议：${model} → ${api}（可用：${[...PROTOCOLS, ...Object.keys(IMAGE_ROLE_FOR)].join(' / ')}）` });
+              send(400, { ok: false, error: `未知协议：${model} → ${api}（可用：${PROTOCOLS.join(" / ")}）` });
               return;
             }
           }
@@ -732,10 +760,7 @@ export function apply(ctx, config) {
             imageWrites = Object.fromEntries(Object.entries(nextImage.roles).map(([role, binding]) => [role, `${binding.provider}/${binding.model} @ ${binding.protocol}`]));
           }
 
-          if (Object.keys(textPlan).length === 0) {
-            send(200, { ok: true, changed: imageWrites !== null, routes: null, image: imageWrites });
-            return;
-          }
+// 纯 image-chat 计划也走后面的统一写入路径（localChat 的模型移动在那里完成）。
           const entry = piAiEntry(ctx);
           if (entry === undefined) {
             send(503, { ok: false, error: `no ${PI_AI} entry is mounted` });
@@ -745,6 +770,25 @@ export function apply(ctx, config) {
           const record = editor.configuration().find((candidate) => candidate.entry === entry);
           const live = mergeProviders(record?.inherited, record?.override ?? entry.options?.config ?? {});
           const planned = splitProvidersByProtocol(live, textPlan);
+          // image-chat：模型移到本插件自带的对话式生图路由上（baseURL 指回自己）。
+          for (const model of localChat) {
+            const ownerRoute = Object.keys(planned).find((name) => (planned[name].models ?? []).some((entry) => entry.id === model));
+            if (ownerRoute === undefined) continue;
+            const targetId = ownerRoute.replace(/-image$/, "") + "-image";
+            const source = planned[ownerRoute];
+            const moved = (source.models ?? []).filter((entry) => entry.id === model);
+            if (moved.length === 0) continue;
+            const { models: _m, modelOverrides: _o, api: _a, ...connection } = source;
+            const existing = planned[targetId];
+            planned[targetId] = {
+              ...(existing ?? connection),
+              api: "openai-completions",
+              baseURL: selfBaseUrl(ctx) + "/gears/api/image-chat",
+              displayName: (source.displayName || ownerRoute) + " · 图像",
+              models: [...((existing || {}).models ?? []), ...moved],
+            };
+            source.models = (source.models ?? []).filter((entry) => entry.id !== model);
+          }
           const changed = !isDeepStrictEqual(planned, live);
           let routes = null;
           if (changed) {
@@ -770,14 +814,23 @@ export function apply(ctx, config) {
         if (req.method === 'POST' && url.pathname === '/gears/api/enhance') {
           const prompt = typeof input?.prompt === 'string' ? input.prompt : '';
           try {
-            if (laneApi === null) throw new Error('dsh-gearbox: 图像通道尚未就绪（image lane not mounted），请检查插件配置');
-            const result = await laneApi.enhance({ prompt, lane: input?.lane === 'edit' ? 'edit' : 't2i' });
+            const result = await optimizePrompt(ctx, config, prompt);
             send(200, { ok: true, ...result });
           } catch (error) {
             send(502, { ok: false, error: String(error?.message ?? error) });
           }
           return;
         }
+        /**
+         * 对话式生图：把本插件伪装成一个 openai-completions 端点。
+         *
+         * 请求是 DSH/pi-ai 发来的标准 chat.completions；取最后一条 user 消息的文本与
+         * 图片块，交给 Image Lane 真正生图、落盘，再包回 chat 响应——内容是
+         * markdown 图片 + 落盘路径。composer 里选生图模型即可直接出图，
+         * 不需要拦截发送，也不依赖会话服务的任何未验证 API。
+         *
+         * stream=true 时手写两段 SSE（首块带内容、次块收尾 + [DONE]）。
+         */
         send(404, { ok: false, error: `unknown gearbox route ${req.method} ${url.pathname}` });
       } catch (error) {
         send(500, { ok: false, error: String(error?.message ?? error) });
@@ -840,7 +893,7 @@ export function apply(ctx, config) {
         const current = entry.options?.config ?? {};
         // Only the sections the settings page edits; anything else passes through.
         const next = { ...current };
-        for (const section of ['rules', 'customEfforts', 'customCompat', 'image', 'ui']) {
+        for (const section of ['rules', 'customEfforts', 'customCompat', 'enhancer']) {
           if (patch[section] !== undefined) next[section] = patch[section];
         }
         await ctx.get('configEditor').edit(entry, () => next);
